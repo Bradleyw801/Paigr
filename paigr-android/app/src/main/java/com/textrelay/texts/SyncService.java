@@ -1,0 +1,248 @@
+package com.textrelay.texts;
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.pm.ServiceInfo;
+import android.os.Build;
+import android.os.IBinder;
+
+import java.io.IOException;
+
+/**
+ * Keeps checking the inbox while the app is closed. A foreground service is the only thing Android lets run this
+ * often without Google's push, and Android shows a notification for it, silent, on its own channel. Android raises
+ * an app's own "minimal" setting for such a notification to an ordinary one, so the way to hide it is Android's
+ * setting for the channel, which it respects; Texts keeps listening either way. With alerts off it doesn't run.
+ */
+public class SyncService extends Service {
+    /** The background notification's channel. */
+    static final String CHANNEL = "status";
+    /** 0.3's "standard" channel; one channel does now. */
+    static final String OLD_STANDARD = "status-standard";
+    static final int NOTIFICATION_ID = 1;
+
+    private static volatile Sync sync;
+    private static volatile Notifier notifier;
+    private static final Object signal = new Object();
+    private Thread loop;
+    private Doorbell doorbell;
+    private volatile boolean running;
+    private long wrapTried;
+
+    static void start(Context context) {
+        Intent intent = new Intent(context, SyncService.class);
+        if (Prefs.ALERT_OFF.equals(new Prefs(context).alertMode())) {
+            context.stopService(intent);
+            return;
+        }
+        try {
+            context.startForegroundService(intent);
+        } catch (RuntimeException ignored) {
+            // Background-start restrictions; the next time the app opens it starts again.
+        }
+    }
+
+    static void stop(Context context) {
+        context.stopService(new Intent(context, SyncService.class));
+    }
+
+    static Notifier notifier(Context context) {
+        Notifier n = notifier;
+        if (n == null) notifier = n = new Notifier(context);
+        return n;
+    }
+
+    static Sync sync(Context context) {
+        Sync s = sync;
+        if (s == null) {
+            Notifier n = notifier(context);
+            sync = s = new Sync(new Prefs(context), new Sync.Listener() {
+                @Override
+                public void onIncoming(java.util.List<org.json.JSONObject> messages) {
+                    n.show(messages);
+                }
+
+                @Override
+                public void onRelayState(boolean online, long lastSeen) {
+                    n.relayState(online, lastSeen);
+                }
+            });
+        }
+        return s;
+    }
+
+    /** Check now instead of at the next interval (the doorbell rang, or the app came to the front). */
+    static void wake() {
+        synchronized (signal) {
+            signal.notifyAll();
+        }
+    }
+
+    /** The screen is open: the page syncs itself, nothing needs announcing. */
+    static void setScreenOpen(Context context, boolean open) {
+        sync(context).screenOpen = open;
+        if (open) new Prefs(context).touchUsed();
+    }
+
+    static void createChannels(Context context) {
+        NotificationManager nm = context.getSystemService(NotificationManager.class);
+        NotificationChannel status = new NotificationChannel(CHANNEL, context.getString(R.string.channel_status), NotificationManager.IMPORTANCE_LOW);
+        status.setShowBadge(false);
+        status.setSound(null, null);
+        status.enableVibration(false);
+        status.setLockscreenVisibility(Notification.VISIBILITY_SECRET);
+        nm.createNotificationChannel(status);
+        if (nm.getNotificationChannel(OLD_STANDARD) != null) nm.deleteNotificationChannel(OLD_STANDARD);
+    }
+
+    /** True once the background notification is turned off in Android's settings. */
+    static boolean statusHidden(Context context) {
+        NotificationManager nm = context.getSystemService(NotificationManager.class);
+        NotificationChannel c = nm.getNotificationChannel(CHANNEL);
+        return c != null && c.getImportance() == NotificationManager.IMPORTANCE_NONE;
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createChannels(this);
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        Notification n = build(this);
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE);
+        } else {
+            startForeground(NOTIFICATION_ID, n);
+        }
+        startLoop();
+        return START_STICKY;
+    }
+
+    private synchronized void startLoop() {
+        if (loop != null && loop.isAlive()) return;
+        running = true;
+        loop = new Thread(this::run, "texts-sync");
+        loop.setDaemon(true);
+        loop.start();
+        if (doorbell == null) {
+            Sync s = sync(this);
+            Prefs p = new Prefs(this);
+            Link l = p.link();
+            s.link = l;
+            Doorbell.Tickets tickets = l == null ? null : () -> new Hedy(l).get("/v2/ticket");
+            doorbell = new Doorbell(l != null ? l.server : p.server(), "inbox", new Doorbell.Listener() {
+                @Override
+                public void onRing(String type, org.json.JSONObject payload) {
+                    wake();
+                }
+
+                @Override
+                public void onStateChange(boolean connected) {
+                    s.doorbellConnected = connected;
+                    if (connected) wake();   // catch up on anything that arrived while the socket was down
+                }
+            }, tickets);
+            doorbell.start();
+        }
+    }
+
+    private void run() {
+        Prefs prefs = new Prefs(this);
+        Sync s = sync(this);
+        long backoff = 2_000;
+        while (running) {
+            if (!prefs.paired()) {
+                stopSelf();
+                return;
+            }
+            long wait;
+            try {
+                Link l = prefs.link();
+                s.link = l;
+                wait = s.checkOnce(l != null ? new Hedy(l) : new Hedy(prefs.server(), prefs.key())) * 1000L;
+                backoff = 2_000;
+                // The wrap for getting back in after a reinstall, if filing it failed when the link was made.
+                if (l != null && prefs.wrapTag().isEmpty() && System.currentTimeMillis() - wrapTried > 10 * 60_000L) {
+                    wrapTried = System.currentTimeMillis();
+                    MainActivity.fileWrap(this, prefs, l);
+                }
+            } catch (Hedy.ApiException e) {
+                if (e.unlinked || (e.keyRejected() && prefs.link() == null)) {
+                    rejected();
+                    stopSelf();
+                    return;
+                }
+                wait = backoff;
+                backoff = Math.min(backoff * 2, 120_000);
+            } catch (IOException | RuntimeException e) {
+                wait = backoff;
+                backoff = Math.min(backoff * 2, 120_000);
+            }
+            synchronized (signal) {
+                try {
+                    signal.wait(wait);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }
+    }
+
+    /** The server no longer accepts this phone: say so once, where a tap opens the app to link it again. */
+    private void rejected() {
+        Prefs p = new Prefs(this);
+        if (p.link() != null) p.setLink(null);
+        else p.setKey("");
+        Intent open = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        Notification n = new Notification.Builder(this, Notifier.CHANNEL)
+                .setSmallIcon(R.drawable.ic_status)
+                .setColor(Ui.BRAND.base)
+                .setContentTitle("Paigr needs to be linked again")
+                .setContentText("This phone was removed from your inbox. In Paigr Relay, tap Link a device, then scan the code with Paigr.")
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        getSystemService(NotificationManager.class).notify(3, n);
+    }
+
+    static Notification build(Context context) {
+        Intent open = new Intent(context, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        return new Notification.Builder(context, CHANNEL)
+                .setSmallIcon(R.drawable.ic_status)
+                .setColor(Ui.BRAND.base)
+                .setContentIntent(pi)
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setOngoing(true)
+                .setShowWhen(false)
+                .setVisibility(Notification.VISIBILITY_SECRET)
+                .setContentTitle("Listening for new texts")
+                .build();
+    }
+
+    @Override
+    public void onDestroy() {
+        running = false;
+        Thread t = loop;
+        if (t != null) t.interrupt();
+        Doorbell d = doorbell;
+        doorbell = null;
+        if (d != null) d.stop();
+        Sync s = sync;
+        if (s != null) s.doorbellConnected = false;
+        super.onDestroy();
+    }
+
+    @Override
+    public IBinder onBind(Intent intent) {
+        return null;
+    }
+}

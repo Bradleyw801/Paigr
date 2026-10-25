@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Paigr</string>
+    <string name="channel_messages">Messages</string>
+    <string name="channel_messages_quiet">Messages, silent</string>
+    <string name="channel_status">Background status</string>
+    <string name="default_server">https://relay--bradwhite.apps.hedyassist.com</string>
+</resources>

@@ -1,0 +1,16 @@
+{
+  "name": "Paigr",
+  "short_name": "Paigr",
+  "description": "Your messages, relayed from the device that holds your number.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f4fa",
+  "theme_color": "#0b7c84",
+  "icons": [
+    { "src": "/icons/texts-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/texts-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/texts-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

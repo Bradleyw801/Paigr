@@ -1,0 +1,7 @@
+# Only what the image copies is needed; the rest stays out of the build.
+test/
+server/test/
+paigr-data/
+node_modules/
+*.log
+.git/

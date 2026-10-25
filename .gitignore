@@ -1,0 +1,19 @@
+# build output
+build/
+.gradle/
+*/app/build/
+inbox/test/tmp/
+inbox/server/test/tmp/
+inbox/paigr-data/
+node_modules/
+*.log
+
+# machine and signing files: never committed
+local.properties
+keystore.properties
+*.jks
+*.keystore
+.idea/
+*.iml
+.kotlin/
+.DS_Store

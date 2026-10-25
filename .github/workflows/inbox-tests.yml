@@ -1,0 +1,17 @@
+# The inbox's own suites (the server, the store, the protocol vectors, the page's service worker), without browsers.
+name: Inbox tests
+on:
+  push:
+    paths: ["inbox/**", ".github/workflows/inbox-tests.yml"]
+  pull_request:
+    paths: ["inbox/**"]
+  workflow_dispatch:
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: SKIP_E2E=1 inbox/test/run-all.sh

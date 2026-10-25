@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12's own opening screen, in the app's colours, so Relay opens on its frame with no white flash. -->
+    <style name="Theme.Relay" parent="android:Theme.DeviceDefault.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_light</item>
+        <item name="android:statusBarColor">@color/window_light</item>
+        <item name="android:navigationBarColor">@color/window_light</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
+        <item name="android:windowSplashScreenBackground">@color/window_light</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/icon_from</item>
+    </style>
+</resources>

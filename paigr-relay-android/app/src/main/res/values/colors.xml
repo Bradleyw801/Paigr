@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher icon's colours: amber running into ember and berry (Ui.BRAND). -->
+    <color name="icon_from">#D84A2C</color>
+    <color name="accent">#D24A2C</color>
+    <color name="accent_dark">#FFB27A</color>
+    <!-- The frame Texts uses too: light paper, or deep midnight (Ui). -->
+    <color name="window_light">#F3F4FA</color>
+    <color name="window_dark">#181B36</color>
+</resources>

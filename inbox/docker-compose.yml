@@ -1,0 +1,28 @@
+# Paigr's inbox server as a Tor onion service: no domain, no open ports, no certificate to look after.
+#   docker compose up -d
+#   docker compose logs paigr      shows the onion address to enter in Paigr Relay
+# Everything it keeps, including the keys behind its onion address, is in the paigr-data volume. Back that up.
+services:
+  paigr:
+    build: .
+    image: paigr-server
+    restart: unless-stopped
+    environment:
+      TOR: "1"
+    volumes:
+      - paigr-data:/data
+
+  # An https address instead of (or as well as) the onion one, for a domain that points at this machine:
+  # uncomment this, put in your domain, and add HOST: "0.0.0.0" and TRUST_PROXY: "1" to paigr's environment above.
+  # Caddy gets the certificate and renews it on its own.
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   ports: ["80:80", "443:443"]
+  #   command: caddy reverse-proxy --from paigr.example.com --to paigr:8787
+  #   volumes:
+  #     - caddy-data:/data
+
+volumes:
+  paigr-data:
+  # caddy-data:

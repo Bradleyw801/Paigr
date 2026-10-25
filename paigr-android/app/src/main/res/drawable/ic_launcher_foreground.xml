@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A speech bubble drawn like a key on the Sidephone's keypad: white, with a shaded lip. Inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFFFF" android:pathData="M41,31 h26 a11,11 0 0 1 11,11 v18 a11,11 0 0 1 -11,11 h-15 l-10,8.5 v-8.5 h-1 a11,11 0 0 1 -11,-11 v-18 a11,11 0 0 1 11,-11 z" />
+    <path android:fillColor="#FFCFE0F7" android:pathData="M30,56 v4 a11,11 0 0 0 11,11 h1 v8.5 l10,-8.5 h15 a11,11 0 0 0 11,-11 v-4 a11,11 0 0 1 -11,11 h-26 a11,11 0 0 1 -11,-11 z" />
+</vector>

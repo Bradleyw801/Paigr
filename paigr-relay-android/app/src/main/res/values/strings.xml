@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Paigr Relay</string>
+    <string name="channel_status">Status</string>
+    <string name="guide_title">Leave this phone at home</string>
+    <string name="default_server">https://relay--bradwhite.apps.hedyassist.com</string>
+</resources>

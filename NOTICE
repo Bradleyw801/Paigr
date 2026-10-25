@@ -1,0 +1,10 @@
+Paigr
+Copyright 2026 Brad White
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Bundled and third-party work:
+- Figtree (web/fonts, the apps' assets): Copyright 2022 The Figtree Project Authors,
+  SIL Open Font License 1.1 (inbox/web/fonts/OFL.txt).
+- Paigr Relay depends on Java-WebSocket (MIT) and ZXing core (Apache License 2.0),
+  fetched by Gradle at build time.

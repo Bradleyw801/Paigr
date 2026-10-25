@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The launcher icon's colours: lagoon running into cobalt (Ui.BRAND). -->
+    <color name="icon_from">#0B7C84</color>
+    <color name="icon_to">#3A5BEB</color>
+    <color name="icon_bg">#0B7C84</color>
+    <color name="accent">#0B7C84</color>
+    <!-- The frame: light paper, or deep midnight (Ui). -->
+    <color name="window_light">#F3F4FA</color>
+    <color name="window_dark">#181B36</color>
+</resources>

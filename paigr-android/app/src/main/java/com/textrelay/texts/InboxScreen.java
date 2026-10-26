@@ -67,11 +67,14 @@ final class InboxScreen extends Screen {
         titleRow.setMinimumHeight(ui.dp(58));
         TextView title = ui.label("Paigr", 27f, Ui.BLACK, ui.text);
         title.setLetterSpacing(-0.025f);
+        title.setSingleLine(true);
+        // On the Sidephone's width the chip and three buttons leave the title little room: it shrinks before it wraps.
+        title.setAutoSizeTextTypeUniformWithConfiguration(18, 27, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         chip = new LinearLayout(a);
         chip.setGravity(Gravity.CENTER_VERTICAL);
-        chip.setPadding(ui.dp(6), 0, ui.dp(11), 0);
+        chip.setPadding(ui.dp(6), 0, ui.dp(9), 0);
         chip.setBackground(ui.pressable(ui.rounded(ui.dark ? ui.surface : ui.surface2, 15), 15));
         chip.setFocusable(true);
         chip.setClickable(true);

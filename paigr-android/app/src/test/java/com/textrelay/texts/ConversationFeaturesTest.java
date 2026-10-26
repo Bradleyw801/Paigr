@@ -108,7 +108,11 @@ public class ConversationFeaturesTest {
 
     /** A text from the other side, filed the way the relay phone files one. */
     private static void arrives(RealInbox s, Link l, String conv, String name, String sender, String text) throws Exception {
-        long ts = System.currentTimeMillis();
+        arrives(s, l, conv, name, sender, text, System.currentTimeMillis());
+    }
+
+    /** The same, timed as the relay phone's clock had it. */
+    private static void arrives(RealInbox s, Link l, String conv, String name, String sender, String text, long ts) throws Exception {
         String fp = l.fpId("test-" + ts + "-" + Crypto.hex(Crypto.random(3)));
         JSONObject payload = new JSONObject().put("text", text).put("sender", sender).put("name", name).put("group", false).put("ts", ts).put("fp", fp);
         JSONObject rec = new JSONObject().put("conv", conv).put("fp", fp).put("ts", ts).put("dir", "in").put("src", "notif").put("read", false)
@@ -173,6 +177,57 @@ public class ConversationFeaturesTest {
     }
 
     // ------------------------------------------------------------------ reactions and quoted replies
+
+    /**
+     * The forms Google writes a reaction in (Reacted 👍 to "…", with or without the quotes, a name in front, or "your
+     * message"), and a reaction timed a little before the text it names (the relay phone's clock against this one's,
+     * on a text sent from here) all end up as chips under that text, never as rows of their own.
+     */
+    @Test
+    public void googlesReactionFormsAndAReactionTimedBeforeItsTextStillAttach() throws Exception {
+        RealInbox s = start("demo");
+        ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
+        MainActivity a = c.get();
+        waitFor("the list", () -> a.inbox.convs.size() >= 9);
+        Model.Conv maya = named(a, "Maya Chen");
+        a.openConversation(maya.conv);
+        waitFor("Maya's thread", () -> a.inbox.thread(maya.conv).size() >= 7 && a.inbox.cursors.containsKey(maya.conv));
+        Link l = prefs.link();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        a.thread.input.setText("See you at the north gate, by the big tree.");
+        find(a.thread.root, "Send").performClick();
+        ShadowLooper.idleMainLooper();
+        JSONObject out = newestOutbox(s, seen);
+        sent(s, out.getString("id"), "rcs");
+        waitFor("sent", () -> {
+            Model.Msg m = saying(a, maya.conv, "See you at the north gate, by the big tree.");
+            return m != null && "sent".equals(m.status);
+        });
+        Model.Msg mine = saying(a, maya.conv, "See you at the north gate, by the big tree.");
+        int rows = a.thread.itemsForTests().size();
+
+        // Her reaction, as Google's notification words it, timed 20 seconds before this phone timed the text.
+        arrives(s, l, maya.conv, "Maya Chen", "Maya Chen", "Reacted ❤️ to \"See you at the north gate, by the big tree.\"", mine.ts - 20_000);
+        waitFor("the heart on the text", () -> {
+            ThreadScreen.Item it = itemFor(a, mine.k);
+            return it != null && it.chips != null && it.chips.size() == 1 && "❤️".equals(it.chips.get(0).emoji);
+        });
+        assertEquals(rows, a.thread.itemsForTests().size());
+        // The same with her name in front and no quotes, cut short, with a full stop; and "your message".
+        arrives(s, l, maya.conv, "Maya Chen", "Maya Chen", "Maya Chen reacted 👍 to See you at the north gate, by the…");
+        arrives(s, l, maya.conv, "Maya Chen", "Maya Chen", "Reacted 😂 to your message.");
+        waitFor("three chips", () -> {
+            ThreadScreen.Item it = itemFor(a, mine.k);
+            return it != null && it.chips != null && it.chips.size() == 3;
+        });
+        assertEquals(rows, a.thread.itemsForTests().size());
+        assertNull(itemSaying(a, "Reacted 😂 to your message."));
+        String screen = allText(a.thread.root);
+        assertFalse(screen, screen.contains("Reacted"));
+        a.onBackPressed();
+        waitFor("the list again", () -> a.list.root.getVisibility() == View.VISIBLE);
+        waitFor("the snippet", () -> allText(a.list.root).contains("😂 to your message"));
+    }
 
     @Test
     public void reactionsAndQuotedRepliesTravelAsTextAndDrawAsWhatTheyAre() throws Exception {

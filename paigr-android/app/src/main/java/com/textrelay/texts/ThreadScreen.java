@@ -545,9 +545,10 @@ final class ThreadScreen extends Screen {
         return q != null ? q.body : m.text;
     }
 
-    /** Which attachment kind a reaction or a quote names a message by. */
+    /** Which attachment kind a reaction or a quote names a message by ("own": the reader's own message, any kind). */
     private static boolean kindMatches(Model.Msg m, String kind) {
         if (kind == null) return false;
+        if ("own".equals(kind)) return m.out();
         if ("link".equals(kind)) return !m.text.isEmpty() && URL.matcher(m.text).find();
         if (m.media == null) return false;
         String mime = m.media.mime == null ? "" : m.media.mime.toLowerCase(Locale.US);
@@ -559,14 +560,28 @@ final class ThreadScreen extends Screen {
         }
     }
 
-    /** The newest message before `from` that `words` quote (or that is `kind` of attachment); -1 for none. */
+    /** Two phones' clocks: a reaction can sort a little before the message it names (sent from here, timed here). */
+    static final long SKEW_MS = 2 * 60_000L;
+
+    /**
+     * The newest message before `from` that `words` quote (or that is `kind` of attachment), else the first one after
+     * it within a couple of minutes (a reaction to a text sent from this phone, made at once, can carry an earlier
+     * time than the text: the relay phone's clock against this one's); -1 for none.
+     */
     private static int target(List<Model.Msg> msgs, int from, String words, String kind) {
         for (int j = from - 1; j >= 0 && j >= from - 400; j--) {
-            Model.Msg t = msgs.get(j);
-            if (t.unchecked) continue;
-            if (words != null ? Words.sameWords(words, shown(t)) || Words.sameWords(words, t.text) : kindMatches(t, kind)) return j;
+            if (names(msgs.get(j), words, kind)) return j;
+        }
+        long at = msgs.get(from).ts;
+        for (int j = from + 1; j < msgs.size() && msgs.get(j).ts - at <= SKEW_MS; j++) {
+            if (names(msgs.get(j), words, kind)) return j;
         }
         return -1;
+    }
+
+    private static boolean names(Model.Msg t, String words, String kind) {
+        if (t.unchecked) return false;
+        return words != null ? Words.sameWords(words, shown(t)) || Words.sameWords(words, t.text) : kindMatches(t, kind);
     }
 
     private static String kindOfQuoteLine(String quoted) {

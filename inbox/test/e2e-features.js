@@ -272,6 +272,22 @@ async function check(name, fn) {
       await page.click("#compose-next");
       await page.waitForFunction(() => document.getElementById("thread-name").textContent === "Maya Chen", null, { timeout: 10000 });
     });
+    await check("k. Google's reaction forms, and a reaction timed before the text it names, still attach as chips", async () => {
+      // in Maya's conversation after j; a text from here, then her reactions as Google words them
+      await page.fill("#msg-input", "See you at the north gate, by the big tree.");
+      await page.click("#send-btn");
+      const it = await outbox(seen);
+      await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "sent", via: "rcs" } });
+      await page.waitForSelector('#msg-list li:has-text("See you at the north gate") :text("Sent")', { timeout: 10000 });
+      const sentAt = (await TR2.openJson(keys.enc, it.o, TR2.AAD.out(conv))).ts;
+      await arrives("Reacted ❤️ to \"See you at the north gate, by the big tree.\"", false, sentAt - 20000);
+      await page.waitForSelector('#msg-list li:has-text("See you at the north gate") .chip', { timeout: 15000 });
+      await arrives("Maya Chen reacted 👍 to See you at the north gate, by the…", false, Date.now());
+      await arrives("Reacted 😂 to your message.", false, Date.now() + 1);
+      await page.waitForFunction(() => document.querySelectorAll('#msg-list li .chip').length >= 3 && [...document.querySelectorAll("#msg-list li")].every(li => !li.textContent.includes("Reacted")), null, { timeout: 15000 });
+      const chips = await page.$$eval('#msg-list li:has-text("See you at the north gate") .chip', els => els.map(e => e.textContent));
+      assert.ok(chips.some(c => c.includes("❤️")) && chips.some(c => c.includes("👍")) && chips.some(c => c.includes("😂")), chips.join(","));
+    });
     if (process.env.SHOT) {   // a look at it: SHOT=/path/to.png node test/e2e-features.js
       await page.setViewportSize({ width: 400, height: 760 });
       await page.click('#msg-list li:has-text("Doors open at 7") .bubble', { button: "right" });

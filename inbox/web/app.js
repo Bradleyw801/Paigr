@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.18.0";
+  const VERSION = "0.18.1";
   const KEY = "relay.key";
   /** This device's place in a private inbox (v2), in a browser: { tid, token, key }. The Texts app keeps it itself. */
   const LINK = "relay.link2";
@@ -818,19 +818,26 @@
   /** Whether a message is the kind of attachment (or link) a reaction or a quote names. */
   function kindMatches(m, kind) {
     if (!kind) return false;
+    if (kind === "own") return m.dir === "out";   // "your message": the reader's own, any kind
     if (kind === "link") return !!m.text && urlsIn(m.text).length > 0;
     if (!m.media) return false;
     const mime = String(m.media.mime || "").toLowerCase();
     return kind === "image" ? mime.startsWith("image/") : kind === "video" ? mime.startsWith("video/") : kind === "audio" ? mime.startsWith("audio/") : true;
   }
 
-  /** The newest message before `from` that `words` quote (or that is `kind` of attachment); -1 for none. */
+  /** Two phones' clocks: a reaction can sort a little before the message it names (sent from here, timed here). */
+  const SKEW_MS = 2 * 60000;
+
+  /**
+   * The newest message before `from` that `words` quote (or that is `kind` of attachment), else the first one after it
+   * within a couple of minutes (a reaction to a text sent from here, made at once, can carry an earlier time than the
+   * text: the relay phone's clock against this device's); -1 for none.
+   */
   function targetOf(msgs, from, words, kind) {
-    for (let j = from - 1; j >= 0 && j >= from - 400; j--) {
-      const t = msgs[j];
-      if (t.unchecked) continue;
-      if (words != null ? (TR2.words.sameWords(words, shownText(t)) || TR2.words.sameWords(words, t.text || "")) : kindMatches(t, kind)) return j;
-    }
+    const names = (t) => !t.unchecked && (words != null ? (TR2.words.sameWords(words, shownText(t)) || TR2.words.sameWords(words, t.text || "")) : kindMatches(t, kind));
+    for (let j = from - 1; j >= 0 && j >= from - 400; j--) if (names(msgs[j])) return j;
+    const at = msgs[from].ts || 0;
+    for (let j = from + 1; j < msgs.length && (msgs[j].ts || 0) - at <= SKEW_MS; j++) if (names(msgs[j])) return j;
     return -1;
   }
 

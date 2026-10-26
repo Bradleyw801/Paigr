@@ -1,5 +1,5 @@
 /* Paigr service worker: notifications, and a cached shell so the app opens offline. */
-const SHELL = "texts-shell-v12";
+const SHELL = "texts-shell-v13";
 const SHELL_FILES = ["/", "/index.html", "/app.js", "/tr2.js", "/styles.css", "/fonts/Figtree.woff2", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

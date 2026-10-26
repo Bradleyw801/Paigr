@@ -214,24 +214,45 @@
   const KIND_SAID = { image: "a picture", video: "a video", audio: "a voice message", file: "an attachment", link: "a link" };
   const KIND_SENT = { image: "an image", video: "a video", audio: "an audio message", file: "an attachment", link: "a link" };
   const EMOJI = "[^\\p{L}\\p{N}\\s\"\u201C\u201D]{1,12}";
-  const WHAT = "(?:[\u201C\"]([^]+)[\u201D\"]|(" + Object.keys(KIND_WORDS).join("|") + "))";
+  // The opening and closing quotes phones put round the words (straight, curly, low-9, guillemets, single).
+  const OPEN = "[\u201C\"\u201E\u00AB\u2018']", CLOSE = "[\u201D\"\u201C\u00BB\u2019']";
+  // What a reaction names: quoted words, or a kind of attachment; as Google writes it, also "your message" and words
+  // with no quotes round them.
+  const WHAT = "(?:" + OPEN + "([^]+?)" + CLOSE + "|(" + Object.keys(KIND_WORDS).join("|") + "))";
+  const WHAT_G = "(?:" + OPEN + "([^]+?)" + CLOSE + "|(" + Object.keys(KIND_WORDS).join("|") + ")|(your message)|([^]+?))";
   const REACTION = [
-    new RegExp("^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) " + WHAT + "$", "u"),
-    new RegExp("^Reacted (" + EMOJI + ") to " + WHAT + "$", "u"),
-    new RegExp("^Removed (a heart|a like|a dislike|a laugh|an exclamation|a question mark|" + EMOJI + ") from " + WHAT + "$", "u"),
-    new RegExp("^(" + EMOJI + ") to " + WHAT + "$", "u")
+    new RegExp("^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) " + WHAT + "\\.?$", "u"),
+    new RegExp("^(?:[^]{1,60}? )?[Rr]eacted (?:with )?(" + EMOJI + ") to " + WHAT_G + "\\.?$", "u"),
+    new RegExp("^Removed (a heart|a like|a dislike|a laugh|an exclamation|a question mark|" + EMOJI + ") from " + WHAT + "\\.?$", "u"),
+    new RegExp("^(" + EMOJI + ") to " + WHAT_G + "\\.?$", "u")
   ];
 
-  /** A text that is a reaction: { emoji, to (the quoted text) or kind (what kind of attachment), removed }; else null. */
+  /** Whether there is a symbol (an emoji, not punctuation such as a dash) in what matched as one. */
+  const symbol = (emoji) => /[\p{So}\u203C\u2049]/u.test(emoji);
+
+  /**
+   * A text that is a reaction: { emoji, to (the quoted text) or kind (what kind of attachment; "own" for "your
+   * message", the reader's own newest message), removed }; else null. The forms read: Apple's (Loved “hi”, Reacted 😮
+   * to “hi”, Removed a heart from “hi”, Liked an image) and Google's (👍 to “hi”; Reacted 👍 to “hi”, with or without
+   * the quotes, a name in front, or "your message" in place of the words). A form that starts with an emoji wants a
+   * real symbol in it, so a line like "- to do" isn't a reaction.
+   */
   function reaction(text) {
     const s = String(text || "").trim();
     for (let i = 0; i < REACTION.length; i++) {
       const m = REACTION[i].exec(s);
       if (!m) continue;
       const first = m[1];
-      let emoji = i === 0 ? REACT_WORDS[first] : i === 2 && REMOVE_WORDS[first] ? REMOVE_WORDS[first] : first;
-      if (!emoji) continue;
-      return { emoji, to: m[2] !== undefined ? m[2] : null, kind: m[3] !== undefined ? KIND_WORDS[m[3]] : null, removed: i === 2 };
+      const emoji = i === 0 ? REACT_WORDS[first] : i === 2 && REMOVE_WORDS[first] ? REMOVE_WORDS[first] : first;
+      if (!emoji || (i !== 0 && !(i === 2 && REMOVE_WORDS[first]) && !symbol(emoji))) continue;
+      let to = m[2] !== undefined ? m[2] : null;
+      let kind = m[3] !== undefined ? KIND_WORDS[m[3]] : null;
+      if (i === 1 || i === 3) {
+        if (m[4] !== undefined) kind = "own";
+        else if (m[5] !== undefined) to = m[5].trim();
+      }
+      if (to == null && kind == null) continue;
+      return { emoji, to, kind, removed: i === 2 };
     }
     return null;
   }
@@ -267,7 +288,10 @@
     return "> " + line + "\n" + String(reply || "").trim();
   }
 
-  /** What text to compare when matching a reaction's or a quote's words to a message: spacing and quotes evened out. */
+  /**
+   * Whether a reaction's or a quote's words name a message that said `b`: spacing and quotes evened out, the end's
+   * punctuation too (a phone quoting "ok." may write "ok"), and a cut allowed (a quote cut short, ending in …).
+   */
   function sameWords(a, b) {
     const n = (s) => normText(s).replace(/[\u201C\u201D"]/g, "").toLowerCase();
     const x = n(a), y = n(b);
@@ -275,13 +299,16 @@
     if (x === y) return true;
     // A quote cut short (quoteText does at 80, phones do too) still names its message. (NFKC writes … as three dots.)
     const cut = x.replace(/(\.\.\.|\u2026)$/, "").trim();
-    return cut.length >= 20 && cut !== x && y.startsWith(cut);
+    if (cut.length >= 12 && cut !== x && y.startsWith(cut)) return true;
+    const trail = (s) => s.replace(/[.!?,;:\s]+$/, "");
+    const xs = trail(x), ys = trail(y);
+    return !!xs && xs === ys;
   }
 
   /** A text as a list or a notification shows it: a reaction in a few words, a quoted reply by its answer. */
   function snippet(text) {
     const r = reaction(text);
-    if (r) return (r.removed ? "Removed " + r.emoji + " from " : r.emoji + " to ") + (r.to != null ? "\u201C" + r.to + "\u201D" : KIND_SAID[r.kind] || "an attachment");
+    if (r) return (r.removed ? "Removed " + r.emoji + " from " : r.emoji + " to ") + (r.to != null ? "\u201C" + r.to + "\u201D" : r.kind === "own" ? "your message" : KIND_SAID[r.kind] || "an attachment");
     const q = quote(text);
     return q ? q.body : String(text || "");
   }

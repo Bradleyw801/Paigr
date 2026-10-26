@@ -1,728 +1,920 @@
 {
-  "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-  "enc": "fc53f0fb7913c57b7c66220961be08b4132c141654401d8296e132427aed876a",
-  "mac": "f7e561472b7aee656bf98bef5731565a8a8c42edb343d285bf492642790a08f8",
-  "iv": "a0a1a2a3a4a5a6a7a8a9aaab",
-  "convId": {
-    "local": "c1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "wire": "b9e6c1dfed2e7f4561bbfce75cc5283d"
+ "key": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+ "enc": "fc53f0fb7913c57b7c66220961be08b4132c141654401d8296e132427aed876a",
+ "mac": "f7e561472b7aee656bf98bef5731565a8a8c42edb343d285bf492642790a08f8",
+ "iv": "a0a1a2a3a4a5a6a7a8a9aaab",
+ "convId": {
+  "local": "c1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "wire": "b9e6c1dfed2e7f4561bbfce75cc5283d"
+ },
+ "fpId": {
+  "local": "0123456789abcdef",
+  "wire": "7aab3766914e5046"
+ },
+ "match": [
+  {
+   "dir": "in",
+   "text": "Checking in  on the checks",
+   "mime": "",
+   "matchText": "Checking in on the checks",
+   "mt": "1617bed9cdb95f4d448d5fddab4b6c29"
   },
-  "fpId": {
-    "local": "0123456789abcdef",
-    "wire": "7aab3766914e5046"
+  {
+   "dir": "in",
+   "text": " Checking in on the checks\n",
+   "mime": "",
+   "matchText": "Checking in on the checks",
+   "mt": "1617bed9cdb95f4d448d5fddab4b6c29"
   },
-  "match": [
-    {
-      "dir": "in",
-      "text": "Checking in  on the checks",
-      "mime": "",
-      "matchText": "Checking in on the checks",
-      "mt": "1617bed9cdb95f4d448d5fddab4b6c29"
-    },
-    {
-      "dir": "in",
-      "text": " Checking in on the checks\n",
-      "mime": "",
-      "matchText": "Checking in on the checks",
-      "mt": "1617bed9cdb95f4d448d5fddab4b6c29"
-    },
-    {
-      "dir": "out",
-      "text": "📷 Photo",
-      "mime": "",
-      "matchText": "\u0000Picture",
-      "mt": "bc3481c751735daceea33b6b6f92ba18"
-    },
-    {
-      "dir": "in",
-      "text": "Sent a picture",
-      "mime": "",
-      "matchText": "\u0000Picture",
-      "mt": "40d50ca41da9fe75e48b7fd35bad833c"
-    },
-    {
-      "dir": "in",
-      "text": "",
-      "mime": "image/jpeg",
-      "matchText": "\u0000Picture",
-      "mt": "40d50ca41da9fe75e48b7fd35bad833c"
-    },
-    {
-      "dir": "in",
-      "text": "",
-      "mime": "video/mp4",
-      "matchText": "\u0000Video",
-      "mt": "f5137daab8515d5c9dcfa6148a4abf43"
-    },
-    {
-      "dir": "in",
-      "text": "",
-      "mime": "audio/mp4",
-      "matchText": "\u0000Voice message",
-      "mt": "b32160924e021dcd52be6878b5beddc2"
-    },
-    {
-      "dir": "in",
-      "text": "",
-      "mime": "application/pdf",
-      "matchText": "\u0000Attachment",
-      "mt": "b3487211dfb9d8f197f26b5a9ece1284"
-    },
-    {
-      "dir": "in",
-      "text": "voice message",
-      "mime": "",
-      "matchText": "\u0000Voice message",
-      "mt": "b32160924e021dcd52be6878b5beddc2"
-    },
-    {
-      "dir": "in",
-      "text": "Hello world​ ",
-      "mime": "",
-      "matchText": "Hello world",
-      "mt": "851d638218fc9626cf6a4fb95f4f0fc9"
-    },
-    {
-      "dir": "in",
-      "text": "ｆｕｌｌ　ｗｉｄｔｈ",
-      "mime": "",
-      "matchText": "full width",
-      "mt": "ff4be80790d2413c96f9ac092feedd72"
-    },
-    {
-      "dir": "out",
-      "text": "line one line two　end",
-      "mime": "",
-      "matchText": "line one line two end",
-      "mt": "90d19d3499727e1c8a6d9ddeb1195168"
-    },
-    {
-      "dir": "in",
-      "text": "tab\tand\u000bvertical\ffeed",
-      "mime": "",
-      "matchText": "tab and vertical feed",
-      "mt": "1ec0e3d082de0c7820abeb829351d592"
-    },
-    {
-      "dir": "in",
-      "text": "next line kept",
-      "mime": "",
-      "matchText": "next line kept",
-      "mt": "0983d16a726f207ad2973b079d144079"
-    },
-    {
-      "dir": "in",
-      "text": "café",
-      "mime": "",
-      "matchText": "café",
-      "mt": "cf308fab664bbb123d89e12527f5e3ba"
-    },
-    {
-      "dir": "in",
-      "text": "café",
-      "mime": "",
-      "matchText": "café",
-      "mt": "cf308fab664bbb123d89e12527f5e3ba"
-    },
-    {
-      "dir": "in",
-      "text": "Ⅻ ﬁ ㎏",
-      "mime": "",
-      "matchText": "XII fi kg",
-      "mt": "4ba0ff7e30d4340cad6d9a299963d3ae"
-    },
-    {
-      "dir": "out",
-      "text": "",
-      "mime": "",
-      "matchText": "",
-      "mt": ""
-    }
-  ],
-  "aads": {
-    "conv": "b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "ts": 1700000000123,
-    "shortTs": 12345,
-    "fp": "7aab3766914e5046",
-    "messageIn": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:in",
-    "messageOut": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:out",
-    "name": "tr2:n:b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "fileOriginal": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:1700000000123:7aab3766914e5046:o",
-    "filePreviewShortTs": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:0000000012345:7aab3766914e5046:p",
-    "merge": "tr2:merge:b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "out": "tr2:o:b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "path": "/media/v2/00112233445566778899aabbccddeeff/b9e6c1dfed2e7f4561bbfce75cc5283d/1700000000123-7aab3766914e5046-o.enc"
+  {
+   "dir": "out",
+   "text": "📷 Photo",
+   "mime": "",
+   "matchText": "\u0000Picture",
+   "mt": "bc3481c751735daceea33b6b6f92ba18"
   },
-  "message": {
-    "aad": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:in",
-    "plain": "{\"text\":\"Hi 👋 there\",\"sender\":\"Andy\",\"name\":\"Andy Graham\",\"group\":false,\"ts\":1700000000123,\"fp\":\"7aab3766914e5046\",\"media\":{\"mime\":\"image/jpeg\",\"w\":640,\"h\":480,\"bytes\":51234}}",
-    "sealed": "e1.oKGio6Slpqeoqaqr_KYKDx8a3Qpw4rWnIMQ6CDGdTyldoOskceDq0ly32uJPXzD_qzF0IrVNAT-jQ-JiVNbkQfkD1W7bN5AWprCAGKaIZzJD2vCN421wpVrZgUb7MvvQpsXIbpKVMUGUyzlrwgE1p8t3mOP-MecJvzPd7gB_2U1dYof8nBT1mZEAtk6_R8gzXUPbSkSEH1C2nH5ZIwiOJEFQ8TuqRFgUVzuYPX27rNIQU4Kz8u--WSxvHtkMro2UgbLnItv-EPAhRLFlCRI"
+  {
+   "dir": "in",
+   "text": "Sent a picture",
+   "mime": "",
+   "matchText": "\u0000Picture",
+   "mt": "40d50ca41da9fe75e48b7fd35bad833c"
   },
-  "request": {
-    "aad": "tr2:o:b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "plain": "{\"text\":\"On my way\",\"n\":\"AAECAwQFBgcICQoLDA0ODw\",\"ts\":1700000000456}",
-    "sealed": "e1.oKGio6Slpqeoqaqr_KYKDx8a3Qpw5bKnvSKL9HCQBWANq-sycdLO-XuT35EzPxbyhgsHYdtnIWKJJa9iOZr0S_t-ljiDZs0EuqLXWv3IIW3A6aJ6a07YBeRkuItD8lK9"
+  {
+   "dir": "in",
+   "text": "",
+   "mime": "image/jpeg",
+   "matchText": "\u0000Picture",
+   "mt": "40d50ca41da9fe75e48b7fd35bad833c"
   },
-  "merge": {
-    "aad": "tr2:merge:b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "from": "f8208b84a8ec0021f35b1df9bdb049bd",
-    "into": "b9e6c1dfed2e7f4561bbfce75cc5283d",
-    "plain": "{\"from\":\"f8208b84a8ec0021f35b1df9bdb049bd\",\"into\":\"b9e6c1dfed2e7f4561bbfce75cc5283d\"}",
-    "sealed": "e1.oKGio6Slpqeoqaqr_KYYGAgD3QpwzOS14GPJuyWIHylM9fk6YvW8iVrjzKZMHxXz_3xvbPMBTHCvD6wvN4KiWuAhkWyCMptR7qCCXa_JIiZI3vOH821rsk3Jlk7yNq_C64wnLqlXPA1aY6xU0AwTYpg"
+  {
+   "dir": "in",
+   "text": "",
+   "mime": "video/mp4",
+   "matchText": "\u0000Video",
+   "mt": "f5137daab8515d5c9dcfa6148a4abf43"
   },
-  "note": {
-    "aad": "tr2:note",
-    "plain": "{\"note\":\"Messages' notifications are off\",\"history\":\"Paused: the phone is low on space\"}",
-    "sealed": "e1.oKGio6Slpqeoqaqr_KYQBRML3Qpw57n0ozrM5mLOByJAsaBuOvDuyFG9xrNVHAP07ycwaLUPQjqvEqwvZ8GiAvsUxnrAM5kOquaPD-mNf38X2bGI4ygw6FmKzBLqdruB9ZDaI2nk0b5yXoPxOHpL-NEoxTk"
+  {
+   "dir": "in",
+   "text": "",
+   "mime": "audio/mp4",
+   "matchText": "\u0000Voice message",
+   "mt": "b32160924e021dcd52be6878b5beddc2"
   },
-  "file": {
-    "aad": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:1700000000123:7aab3766914e5046:o",
-    "plainHex": "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c51769bc0e50a2f54799ec3e80d32577ca1c6eb10355a7fa4c9ee13385d82a7ccf1163b6085aacff4193e6388add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db00254a6f94b9de03284d7297bce1062b50759abfe4092e53789dc2e70c31567ba0c5ea0f34597ea3c8ed12375c81a6cbf0153a5f84a9cef3183d6287acd1f61b40658aafd4f91e43688db2d7fc21466b90b5daff24496e93b8dd02274c7196bbe0052a4f7499bee3082d52779cc1e60b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42",
-    "sealedHex": "a0a1a2a3a4a5a6a7a8a9aaab8cb42b10f8aa163e61f2a12517b7bab54a698286c0d1f056d03b424e2feec946dead848bf02cdfa044db7d10a1ed6996ee98c55256f07ef1901e90a63d4ee64c828d82aaa6b8b8afe390e1652986f20a51c52eeab9a181c0614d0d41f09bbacb59333adf83b2306fde3e8cbd21ce189d0e2f68d1b0babcaf9af8312a44268c0a599e70ac603d90ad9a3d8517de9a9f8a9f2a874c59e672d39d5c3944a8a5430f6edbf56acdcefff8d2b519aefa511cbb0a7357715265aa7dc44949017673dfc5cd5bcbdb3564492319290b9e2c4641c10938522dd748491580b670bd422253558ef103116f1ed3fce7d3ed4a70527829b6dcc2838d1a5a31e314ab182de6d1638c0f4b2888fa6b62d300f53f65a1ea3390f755ea939eef6b9b048bc7e69672f0e6676fb5d285b80e5c48ecf6ec95722cbebf1c622fadc4635b627bde"
+  {
+   "dir": "in",
+   "text": "",
+   "mime": "application/pdf",
+   "matchText": "\u0000Attachment",
+   "mt": "b3487211dfb9d8f197f26b5a9ece1284"
   },
-  "link": {
-    "code": "K7Q4-M2XD-9PRT",
-    "norm": "k7q4m2xd9prt",
-    "lookup": "35f150257ca476669421e3e17aa58707ccad582cf9a7c7cf1e2a97b2f6beb021",
-    "boxKey": "23a1b3205863a968d7ad38a878f54bbd3fbaa08d19a9725d57b161858a68efb6",
-    "box": "e1.oKGio6Slpqeoqaqr7yAIhP-1oXVhjFofR6gwTUcSEJVj9QMLTTCEB7pG2pr7IgthCsdivzZS6OiBANZ_O7Fj4zvxAwOCJZ8hDBU_A_d3thrlTU3bDSxllBkoEXpKVFjVkK2XBOYF3QJpctHiBldB0MQPYhVkiidcU-gohiIZnXE"
+  {
+   "dir": "in",
+   "text": "voice message",
+   "mime": "",
+   "matchText": "\u0000Voice message",
+   "mt": "b32160924e021dcd52be6878b5beddc2"
   },
-  "phone": {
-    "androidId": "3f2a9c7b1e4d5a60",
-    "role": "relay",
-    "tag": "f11d95e905053da42761f3bb07ec2c31f419ea1affb72d9741b86d7e720b0f7e",
-    "wrapKey": "bbbaa932f765940ce9c51d41828881fdbd181b4b86e8d11968c396578ffef74f",
-    "wrap": "e1.oKGio6SlpqeoqaqrCGr9OELTiqddYMQd2cuEj6apTpSakeCntNDf3CDWgS-TYN_aERdX3GYut9i2oP8ujzMpPyTtL0bBEbEM223s170J4IRppybhyDhsSMCEih8L2-bcILeMiCBDXS1cApv7yhc2iDSwhfceQdLrwsnIxHIa3WvAqYp8hDlsVNXiek6qrw"
+  {
+   "dir": "in",
+   "text": "Hello world​ ",
+   "mime": "",
+   "matchText": "Hello world",
+   "mt": "851d638218fc9626cf6a4fb95f4f0fc9"
   },
-  "words": {
-    "parse": [
-      {
-        "text": "Loved “Running late, 10 min”",
-        "reaction": {
-          "emoji": "❤️",
-          "to": "Running late, 10 min",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❤️ to “Running late, 10 min”"
-      },
-      {
-        "text": "Liked “hey”",
-        "reaction": {
-          "emoji": "👍",
-          "to": "hey",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to “hey”"
-      },
-      {
-        "text": "Disliked “no”",
-        "reaction": {
-          "emoji": "👎",
-          "to": "no",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👎 to “no”"
-      },
-      {
-        "text": "Laughed at “that joke”",
-        "reaction": {
-          "emoji": "😂",
-          "to": "that joke",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "😂 to “that joke”"
-      },
-      {
-        "text": "Emphasized “call me”",
-        "reaction": {
-          "emoji": "‼️",
-          "to": "call me",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "‼️ to “call me”"
-      },
-      {
-        "text": "Questioned “tomorrow?”",
-        "reaction": {
-          "emoji": "❓",
-          "to": "tomorrow?",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❓ to “tomorrow?”"
-      },
-      {
-        "text": "Liked \"straight quotes\"",
-        "reaction": {
-          "emoji": "👍",
-          "to": "straight quotes",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to “straight quotes”"
-      },
-      {
-        "text": "Reacted 😮 to “hi there”",
-        "reaction": {
-          "emoji": "😮",
-          "to": "hi there",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "😮 to “hi there”"
-      },
-      {
-        "text": "Reacted 🙏 to “thanks”",
-        "reaction": {
-          "emoji": "🙏",
-          "to": "thanks",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "🙏 to “thanks”"
-      },
-      {
-        "text": "Reacted 🏳️‍🌈 to “pride”",
-        "reaction": {
-          "emoji": "🏳️‍🌈",
-          "to": "pride",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "🏳️‍🌈 to “pride”"
-      },
-      {
-        "text": "👍 to “hey”",
-        "reaction": {
-          "emoji": "👍",
-          "to": "hey",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to “hey”"
-      },
-      {
-        "text": "❤️ to “hey”",
-        "reaction": {
-          "emoji": "❤️",
-          "to": "hey",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❤️ to “hey”"
-      },
-      {
-        "text": "Loved an image",
-        "reaction": {
-          "emoji": "❤️",
-          "to": null,
-          "kind": "image",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❤️ to a picture"
-      },
-      {
-        "text": "Liked a video",
-        "reaction": {
-          "emoji": "👍",
-          "to": null,
-          "kind": "video",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to a video"
-      },
-      {
-        "text": "Laughed at an attachment",
-        "reaction": {
-          "emoji": "😂",
-          "to": null,
-          "kind": "file",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "😂 to an attachment"
-      },
-      {
-        "text": "Reacted 😢 to an audio message",
-        "reaction": {
-          "emoji": "😢",
-          "to": null,
-          "kind": "audio",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "😢 to a voice message"
-      },
-      {
-        "text": "Loved a sticker",
-        "reaction": {
-          "emoji": "❤️",
-          "to": null,
-          "kind": "image",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❤️ to a picture"
-      },
-      {
-        "text": "Liked a link",
-        "reaction": {
-          "emoji": "👍",
-          "to": null,
-          "kind": "link",
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to a link"
-      },
-      {
-        "text": "Removed a heart from “hi”",
-        "reaction": {
-          "emoji": "❤️",
-          "to": "hi",
-          "kind": null,
-          "removed": true
-        },
-        "quote": null,
-        "snippet": "Removed ❤️ from “hi”"
-      },
-      {
-        "text": "Removed a like from an image",
-        "reaction": {
-          "emoji": "👍",
-          "to": null,
-          "kind": "image",
-          "removed": true
-        },
-        "quote": null,
-        "snippet": "Removed 👍 from a picture"
-      },
-      {
-        "text": "Removed 😮 from “hi”",
-        "reaction": {
-          "emoji": "😮",
-          "to": "hi",
-          "kind": null,
-          "removed": true
-        },
-        "quote": null,
-        "snippet": "Removed 😮 from “hi”"
-      },
-      {
-        "text": "Removed a question mark from “why”",
-        "reaction": {
-          "emoji": "❓",
-          "to": "why",
-          "kind": null,
-          "removed": true
-        },
-        "quote": null,
-        "snippet": "Removed ❓ from “why”"
-      },
-      {
-        "text": "I Loved “x”",
-        "reaction": null,
-        "quote": null,
-        "snippet": "I Loved “x”"
-      },
-      {
-        "text": "Loved",
-        "reaction": null,
-        "quote": null,
-        "snippet": "Loved"
-      },
-      {
-        "text": "Loved “”",
-        "reaction": null,
-        "quote": null,
-        "snippet": "Loved “”"
-      },
-      {
-        "text": "loved “lower”",
-        "reaction": null,
-        "quote": null,
-        "snippet": "loved “lower”"
-      },
-      {
-        "text": "Reacted to “x”",
-        "reaction": null,
-        "quote": null,
-        "snippet": "Reacted to “x”"
-      },
-      {
-        "text": "Reacted abc to “x”",
-        "reaction": null,
-        "quote": null,
-        "snippet": "Reacted abc to “x”"
-      },
-      {
-        "text": "👍 to nothing",
-        "reaction": null,
-        "quote": null,
-        "snippet": "👍 to nothing"
-      },
-      {
-        "text": "Liked “multi\nline”",
-        "reaction": {
-          "emoji": "👍",
-          "to": "multi\nline",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "👍 to “multi\nline”"
-      },
-      {
-        "text": "> Running late\nNo rush",
-        "reaction": null,
-        "quote": {
-          "quoted": "Running late",
-          "body": "No rush"
-        },
-        "snippet": "No rush"
-      },
-      {
-        "text": "> a\n> b\n\nok",
-        "reaction": null,
-        "quote": {
-          "quoted": "a b",
-          "body": "ok"
-        },
-        "snippet": "ok"
-      },
-      {
-        "text": "> only",
-        "reaction": null,
-        "quote": null,
-        "snippet": "> only"
-      },
-      {
-        "text": ">no space",
-        "reaction": null,
-        "quote": null,
-        "snippet": ">no space"
-      },
-      {
-        "text": "hello\n> x",
-        "reaction": null,
-        "quote": null,
-        "snippet": "hello\n> x"
-      },
-      {
-        "text": ">\nbare",
-        "reaction": null,
-        "quote": {
-          "quoted": "",
-          "body": "bare"
-        },
-        "snippet": "bare"
-      },
-      {
-        "text": "> quoted\n> more\nanswer\nsecond line",
-        "reaction": null,
-        "quote": {
-          "quoted": "quoted more",
-          "body": "answer\nsecond line"
-        },
-        "snippet": "answer\nsecond line"
-      },
-      {
-        "text": "plain text",
-        "reaction": null,
-        "quote": null,
-        "snippet": "plain text"
-      },
-      {
-        "text": "  Loved “padded”  ",
-        "reaction": {
-          "emoji": "❤️",
-          "to": "padded",
-          "kind": null,
-          "removed": false
-        },
-        "quote": null,
-        "snippet": "❤️ to “padded”"
-      }
-    ],
-    "reactionText": [
-      {
-        "emoji": "❤️",
-        "to": "hi",
-        "kind": null,
-        "removed": false,
-        "text": "Loved “hi”"
-      },
-      {
-        "emoji": "👍",
-        "to": "Running late, 10 min",
-        "kind": null,
-        "removed": false,
-        "text": "Liked “Running late, 10 min”"
-      },
-      {
-        "emoji": "👎",
-        "to": "",
-        "kind": "image",
-        "removed": false,
-        "text": "Disliked an image"
-      },
-      {
-        "emoji": "😂",
-        "to": null,
-        "kind": "video",
-        "removed": false,
-        "text": "Laughed at a video"
-      },
-      {
-        "emoji": "‼️",
-        "to": "x",
-        "kind": null,
-        "removed": false,
-        "text": "Emphasized “x”"
-      },
-      {
-        "emoji": "❓",
-        "to": "x",
-        "kind": null,
-        "removed": false,
-        "text": "Questioned “x”"
-      },
-      {
-        "emoji": "😮",
-        "to": "hi there",
-        "kind": null,
-        "removed": false,
-        "text": "Reacted 😮 to “hi there”"
-      },
-      {
-        "emoji": "🙏",
-        "to": null,
-        "kind": "audio",
-        "removed": false,
-        "text": "Reacted 🙏 to an audio message"
-      },
-      {
-        "emoji": "❤️",
-        "to": "hi",
-        "kind": null,
-        "removed": true,
-        "text": "Removed a heart from “hi”"
-      },
-      {
-        "emoji": "👍",
-        "to": null,
-        "kind": "image",
-        "removed": true,
-        "text": "Removed a like from an image"
-      },
-      {
-        "emoji": "😮",
-        "to": "hi",
-        "kind": null,
-        "removed": true,
-        "text": "Removed 😮 from “hi”"
-      },
-      {
-        "emoji": "😮",
-        "to": null,
-        "kind": "file",
-        "removed": true,
-        "text": "Removed 😮 from an attachment"
-      },
-      {
-        "emoji": "😮",
-        "to": null,
-        "kind": "nonsense",
-        "removed": false,
-        "text": "Reacted 😮 to an attachment"
-      }
-    ],
-    "quoteText": [
-      {
-        "original": "Running late,  10 min\nsecond line",
-        "kind": null,
-        "reply": "No rush",
-        "text": "> Running late, 10 min second line\nNo rush"
-      },
-      {
-        "original": "",
-        "kind": "image",
-        "reply": "nice",
-        "text": "> Picture\nnice"
-      },
-      {
-        "original": "",
-        "kind": null,
-        "reply": "ok",
-        "text": "> Attachment\nok"
-      },
-      {
-        "original": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-        "kind": null,
-        "reply": " r ",
-        "text": "> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\nr"
-      }
-    ],
-    "sameWords": [
-      [
-        "“Running late”",
-        "Running  late",
-        true
-      ],
-      [
-        "Running late, 10 min and then some more wo…",
-        "Running late, 10 min and then some more words here",
-        true
-      ],
-      [
-        "Running late, 10 min and then some more wo...",
-        "Running late, 10 min and then some more words here",
-        true
-      ],
-      [
-        "hi…",
-        "hi there",
-        false
-      ],
-      [
-        "hi",
-        "hi there",
-        false
-      ],
-      [
-        "",
-        "",
-        false
-      ],
-      [
-        "A",
-        "a",
-        true
-      ],
-      [
-        "ＡＢＣ",
-        "ABC",
-        true
-      ]
-    ]
+  {
+   "dir": "in",
+   "text": "ｆｕｌｌ　ｗｉｄｔｈ",
+   "mime": "",
+   "matchText": "full width",
+   "mt": "ff4be80790d2413c96f9ac092feedd72"
+  },
+  {
+   "dir": "out",
+   "text": "line one line two　end",
+   "mime": "",
+   "matchText": "line one line two end",
+   "mt": "90d19d3499727e1c8a6d9ddeb1195168"
+  },
+  {
+   "dir": "in",
+   "text": "tab\tand\u000bvertical\ffeed",
+   "mime": "",
+   "matchText": "tab and vertical feed",
+   "mt": "1ec0e3d082de0c7820abeb829351d592"
+  },
+  {
+   "dir": "in",
+   "text": "next line kept",
+   "mime": "",
+   "matchText": "next line kept",
+   "mt": "0983d16a726f207ad2973b079d144079"
+  },
+  {
+   "dir": "in",
+   "text": "café",
+   "mime": "",
+   "matchText": "café",
+   "mt": "cf308fab664bbb123d89e12527f5e3ba"
+  },
+  {
+   "dir": "in",
+   "text": "café",
+   "mime": "",
+   "matchText": "café",
+   "mt": "cf308fab664bbb123d89e12527f5e3ba"
+  },
+  {
+   "dir": "in",
+   "text": "Ⅻ ﬁ ㎏",
+   "mime": "",
+   "matchText": "XII fi kg",
+   "mt": "4ba0ff7e30d4340cad6d9a299963d3ae"
+  },
+  {
+   "dir": "out",
+   "text": "",
+   "mime": "",
+   "matchText": "",
+   "mt": ""
   }
+ ],
+ "aads": {
+  "conv": "b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "ts": 1700000000123,
+  "shortTs": 12345,
+  "fp": "7aab3766914e5046",
+  "messageIn": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:in",
+  "messageOut": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:out",
+  "name": "tr2:n:b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "fileOriginal": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:1700000000123:7aab3766914e5046:o",
+  "filePreviewShortTs": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:0000000012345:7aab3766914e5046:p",
+  "merge": "tr2:merge:b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "out": "tr2:o:b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "path": "/media/v2/00112233445566778899aabbccddeeff/b9e6c1dfed2e7f4561bbfce75cc5283d/1700000000123-7aab3766914e5046-o.enc"
+ },
+ "message": {
+  "aad": "tr2:m:b9e6c1dfed2e7f4561bbfce75cc5283d:in",
+  "plain": "{\"text\":\"Hi 👋 there\",\"sender\":\"Andy\",\"name\":\"Andy Graham\",\"group\":false,\"ts\":1700000000123,\"fp\":\"7aab3766914e5046\",\"media\":{\"mime\":\"image/jpeg\",\"w\":640,\"h\":480,\"bytes\":51234}}",
+  "sealed": "e1.oKGio6Slpqeoqaqr_KYKDx8a3Qpw4rWnIMQ6CDGdTyldoOskceDq0ly32uJPXzD_qzF0IrVNAT-jQ-JiVNbkQfkD1W7bN5AWprCAGKaIZzJD2vCN421wpVrZgUb7MvvQpsXIbpKVMUGUyzlrwgE1p8t3mOP-MecJvzPd7gB_2U1dYof8nBT1mZEAtk6_R8gzXUPbSkSEH1C2nH5ZIwiOJEFQ8TuqRFgUVzuYPX27rNIQU4Kz8u--WSxvHtkMro2UgbLnItv-EPAhRLFlCRI"
+ },
+ "request": {
+  "aad": "tr2:o:b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "plain": "{\"text\":\"On my way\",\"n\":\"AAECAwQFBgcICQoLDA0ODw\",\"ts\":1700000000456}",
+  "sealed": "e1.oKGio6Slpqeoqaqr_KYKDx8a3Qpw5bKnvSKL9HCQBWANq-sycdLO-XuT35EzPxbyhgsHYdtnIWKJJa9iOZr0S_t-ljiDZs0EuqLXWv3IIW3A6aJ6a07YBeRkuItD8lK9"
+ },
+ "merge": {
+  "aad": "tr2:merge:b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "from": "f8208b84a8ec0021f35b1df9bdb049bd",
+  "into": "b9e6c1dfed2e7f4561bbfce75cc5283d",
+  "plain": "{\"from\":\"f8208b84a8ec0021f35b1df9bdb049bd\",\"into\":\"b9e6c1dfed2e7f4561bbfce75cc5283d\"}",
+  "sealed": "e1.oKGio6Slpqeoqaqr_KYYGAgD3QpwzOS14GPJuyWIHylM9fk6YvW8iVrjzKZMHxXz_3xvbPMBTHCvD6wvN4KiWuAhkWyCMptR7qCCXa_JIiZI3vOH821rsk3Jlk7yNq_C64wnLqlXPA1aY6xU0AwTYpg"
+ },
+ "note": {
+  "aad": "tr2:note",
+  "plain": "{\"note\":\"Messages' notifications are off\",\"history\":\"Paused: the phone is low on space\"}",
+  "sealed": "e1.oKGio6Slpqeoqaqr_KYQBRML3Qpw57n0ozrM5mLOByJAsaBuOvDuyFG9xrNVHAP07ycwaLUPQjqvEqwvZ8GiAvsUxnrAM5kOquaPD-mNf38X2bGI4ygw6FmKzBLqdruB9ZDaI2nk0b5yXoPxOHpL-NEoxTk"
+ },
+ "file": {
+  "aad": "tr2:f:b9e6c1dfed2e7f4561bbfce75cc5283d:1700000000123:7aab3766914e5046:o",
+  "plainHex": "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42678cb1d6fb20456a8fb4d9fe23486d92b7dc01264b7095badf04294e7398bde2072c51769bc0e50a2f54799ec3e80d32577ca1c6eb10355a7fa4c9ee13385d82a7ccf1163b6085aacff4193e6388add2f71c41668bb0d5fa1f44698eb3d8fd22476c91b6db00254a6f94b9de03284d7297bce1062b50759abfe4092e53789dc2e70c31567ba0c5ea0f34597ea3c8ed12375c81a6cbf0153a5f84a9cef3183d6287acd1f61b40658aafd4f91e43688db2d7fc21466b90b5daff24496e93b8dd02274c7196bbe0052a4f7499bee3082d52779cc1e60b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2173c6186abd0f51a3f6489aed3f81d42",
+  "sealedHex": "a0a1a2a3a4a5a6a7a8a9aaab8cb42b10f8aa163e61f2a12517b7bab54a698286c0d1f056d03b424e2feec946dead848bf02cdfa044db7d10a1ed6996ee98c55256f07ef1901e90a63d4ee64c828d82aaa6b8b8afe390e1652986f20a51c52eeab9a181c0614d0d41f09bbacb59333adf83b2306fde3e8cbd21ce189d0e2f68d1b0babcaf9af8312a44268c0a599e70ac603d90ad9a3d8517de9a9f8a9f2a874c59e672d39d5c3944a8a5430f6edbf56acdcefff8d2b519aefa511cbb0a7357715265aa7dc44949017673dfc5cd5bcbdb3564492319290b9e2c4641c10938522dd748491580b670bd422253558ef103116f1ed3fce7d3ed4a70527829b6dcc2838d1a5a31e314ab182de6d1638c0f4b2888fa6b62d300f53f65a1ea3390f755ea939eef6b9b048bc7e69672f0e6676fb5d285b80e5c48ecf6ec95722cbebf1c622fadc4635b627bde"
+ },
+ "link": {
+  "code": "K7Q4-M2XD-9PRT",
+  "norm": "k7q4m2xd9prt",
+  "lookup": "35f150257ca476669421e3e17aa58707ccad582cf9a7c7cf1e2a97b2f6beb021",
+  "boxKey": "23a1b3205863a968d7ad38a878f54bbd3fbaa08d19a9725d57b161858a68efb6",
+  "box": "e1.oKGio6Slpqeoqaqr7yAIhP-1oXVhjFofR6gwTUcSEJVj9QMLTTCEB7pG2pr7IgthCsdivzZS6OiBANZ_O7Fj4zvxAwOCJZ8hDBU_A_d3thrlTU3bDSxllBkoEXpKVFjVkK2XBOYF3QJpctHiBldB0MQPYhVkiidcU-gohiIZnXE"
+ },
+ "phone": {
+  "androidId": "3f2a9c7b1e4d5a60",
+  "role": "relay",
+  "tag": "f11d95e905053da42761f3bb07ec2c31f419ea1affb72d9741b86d7e720b0f7e",
+  "wrapKey": "bbbaa932f765940ce9c51d41828881fdbd181b4b86e8d11968c396578ffef74f",
+  "wrap": "e1.oKGio6SlpqeoqaqrCGr9OELTiqddYMQd2cuEj6apTpSakeCntNDf3CDWgS-TYN_aERdX3GYut9i2oP8ujzMpPyTtL0bBEbEM223s170J4IRppybhyDhsSMCEih8L2-bcILeMiCBDXS1cApv7yhc2iDSwhfceQdLrwsnIxHIa3WvAqYp8hDlsVNXiek6qrw"
+ },
+ "words": {
+  "parse": [
+   {
+    "text": "Loved “Running late, 10 min”",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "Running late, 10 min",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to “Running late, 10 min”"
+   },
+   {
+    "text": "Liked “hey”",
+    "reaction": {
+     "emoji": "👍",
+     "to": "hey",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “hey”"
+   },
+   {
+    "text": "Disliked “no”",
+    "reaction": {
+     "emoji": "👎",
+     "to": "no",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👎 to “no”"
+   },
+   {
+    "text": "Laughed at “that joke”",
+    "reaction": {
+     "emoji": "😂",
+     "to": "that joke",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "😂 to “that joke”"
+   },
+   {
+    "text": "Emphasized “call me”",
+    "reaction": {
+     "emoji": "‼️",
+     "to": "call me",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "‼️ to “call me”"
+   },
+   {
+    "text": "Questioned “tomorrow?”",
+    "reaction": {
+     "emoji": "❓",
+     "to": "tomorrow?",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❓ to “tomorrow?”"
+   },
+   {
+    "text": "Liked \"straight quotes\"",
+    "reaction": {
+     "emoji": "👍",
+     "to": "straight quotes",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “straight quotes”"
+   },
+   {
+    "text": "Reacted 😮 to “hi there”",
+    "reaction": {
+     "emoji": "😮",
+     "to": "hi there",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "😮 to “hi there”"
+   },
+   {
+    "text": "Reacted 🙏 to “thanks”",
+    "reaction": {
+     "emoji": "🙏",
+     "to": "thanks",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "🙏 to “thanks”"
+   },
+   {
+    "text": "Reacted 🏳️‍🌈 to “pride”",
+    "reaction": {
+     "emoji": "🏳️‍🌈",
+     "to": "pride",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "🏳️‍🌈 to “pride”"
+   },
+   {
+    "text": "👍 to “hey”",
+    "reaction": {
+     "emoji": "👍",
+     "to": "hey",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “hey”"
+   },
+   {
+    "text": "❤️ to “hey”",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "hey",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to “hey”"
+   },
+   {
+    "text": "Loved an image",
+    "reaction": {
+     "emoji": "❤️",
+     "to": null,
+     "kind": "image",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to a picture"
+   },
+   {
+    "text": "Liked a video",
+    "reaction": {
+     "emoji": "👍",
+     "to": null,
+     "kind": "video",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to a video"
+   },
+   {
+    "text": "Laughed at an attachment",
+    "reaction": {
+     "emoji": "😂",
+     "to": null,
+     "kind": "file",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "😂 to an attachment"
+   },
+   {
+    "text": "Reacted 😢 to an audio message",
+    "reaction": {
+     "emoji": "😢",
+     "to": null,
+     "kind": "audio",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "😢 to a voice message"
+   },
+   {
+    "text": "Loved a sticker",
+    "reaction": {
+     "emoji": "❤️",
+     "to": null,
+     "kind": "image",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to a picture"
+   },
+   {
+    "text": "Liked a link",
+    "reaction": {
+     "emoji": "👍",
+     "to": null,
+     "kind": "link",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to a link"
+   },
+   {
+    "text": "Removed a heart from “hi”",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "hi",
+     "kind": null,
+     "removed": true
+    },
+    "quote": null,
+    "snippet": "Removed ❤️ from “hi”"
+   },
+   {
+    "text": "Removed a like from an image",
+    "reaction": {
+     "emoji": "👍",
+     "to": null,
+     "kind": "image",
+     "removed": true
+    },
+    "quote": null,
+    "snippet": "Removed 👍 from a picture"
+   },
+   {
+    "text": "Removed 😮 from “hi”",
+    "reaction": {
+     "emoji": "😮",
+     "to": "hi",
+     "kind": null,
+     "removed": true
+    },
+    "quote": null,
+    "snippet": "Removed 😮 from “hi”"
+   },
+   {
+    "text": "Removed a question mark from “why”",
+    "reaction": {
+     "emoji": "❓",
+     "to": "why",
+     "kind": null,
+     "removed": true
+    },
+    "quote": null,
+    "snippet": "Removed ❓ from “why”"
+   },
+   {
+    "text": "Reacted 👍 to \"On my way\"",
+    "reaction": {
+     "emoji": "👍",
+     "to": "On my way",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “On my way”"
+   },
+   {
+    "text": "Reacted 👍 to On my way",
+    "reaction": {
+     "emoji": "👍",
+     "to": "On my way",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “On my way”"
+   },
+   {
+    "text": "Reacted 👍 to On my way.",
+    "reaction": {
+     "emoji": "👍",
+     "to": "On my way",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “On my way”"
+   },
+   {
+    "text": "Maya Chen reacted ❤️ to “Doors open at 7”",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "Doors open at 7",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to “Doors open at 7”"
+   },
+   {
+    "text": "Reacted with 😂 to “lol”",
+    "reaction": {
+     "emoji": "😂",
+     "to": "lol",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "😂 to “lol”"
+   },
+   {
+    "text": "👍 to hey there",
+    "reaction": {
+     "emoji": "👍",
+     "to": "hey there",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “hey there”"
+   },
+   {
+    "text": "Reacted 👍 to your message",
+    "reaction": {
+     "emoji": "👍",
+     "to": null,
+     "kind": "own",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to your message"
+   },
+   {
+    "text": "❤️ to your message.",
+    "reaction": {
+     "emoji": "❤️",
+     "to": null,
+     "kind": "own",
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to your message"
+   },
+   {
+    "text": "Loved ‘single quotes’",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "single quotes",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to “single quotes”"
+   },
+   {
+    "text": "Liked „low quotes“",
+    "reaction": {
+     "emoji": "👍",
+     "to": "low quotes",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “low quotes”"
+   },
+   {
+    "text": "Reacted 👍 to «guillemets»",
+    "reaction": {
+     "emoji": "👍",
+     "to": "guillemets",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “guillemets”"
+   },
+   {
+    "text": "Removed 👍 from an image",
+    "reaction": {
+     "emoji": "👍",
+     "to": null,
+     "kind": "image",
+     "removed": true
+    },
+    "quote": null,
+    "snippet": "Removed 👍 from a picture"
+   },
+   {
+    "text": "- to do list",
+    "reaction": null,
+    "quote": null,
+    "snippet": "- to do list"
+   },
+   {
+    "text": ":) to be honest",
+    "reaction": null,
+    "quote": null,
+    "snippet": ":) to be honest"
+   },
+   {
+    "text": "hello to “you”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "hello to “you”"
+   },
+   {
+    "text": "— to be fair",
+    "reaction": null,
+    "quote": null,
+    "snippet": "— to be fair"
+   },
+   {
+    "text": "I reacted to it",
+    "reaction": null,
+    "quote": null,
+    "snippet": "I reacted to it"
+   },
+   {
+    "text": "I Loved “x”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "I Loved “x”"
+   },
+   {
+    "text": "Loved",
+    "reaction": null,
+    "quote": null,
+    "snippet": "Loved"
+   },
+   {
+    "text": "Loved “”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "Loved “”"
+   },
+   {
+    "text": "loved “lower”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "loved “lower”"
+   },
+   {
+    "text": "Reacted to “x”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "Reacted to “x”"
+   },
+   {
+    "text": "Reacted abc to “x”",
+    "reaction": null,
+    "quote": null,
+    "snippet": "Reacted abc to “x”"
+   },
+   {
+    "text": "👍 to nothing",
+    "reaction": {
+     "emoji": "👍",
+     "to": "nothing",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “nothing”"
+   },
+   {
+    "text": "Liked “multi\nline”",
+    "reaction": {
+     "emoji": "👍",
+     "to": "multi\nline",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "👍 to “multi\nline”"
+   },
+   {
+    "text": "> Running late\nNo rush",
+    "reaction": null,
+    "quote": {
+     "quoted": "Running late",
+     "body": "No rush"
+    },
+    "snippet": "No rush"
+   },
+   {
+    "text": "> a\n> b\n\nok",
+    "reaction": null,
+    "quote": {
+     "quoted": "a b",
+     "body": "ok"
+    },
+    "snippet": "ok"
+   },
+   {
+    "text": "> only",
+    "reaction": null,
+    "quote": null,
+    "snippet": "> only"
+   },
+   {
+    "text": ">no space",
+    "reaction": null,
+    "quote": null,
+    "snippet": ">no space"
+   },
+   {
+    "text": "hello\n> x",
+    "reaction": null,
+    "quote": null,
+    "snippet": "hello\n> x"
+   },
+   {
+    "text": ">\nbare",
+    "reaction": null,
+    "quote": {
+     "quoted": "",
+     "body": "bare"
+    },
+    "snippet": "bare"
+   },
+   {
+    "text": "> quoted\n> more\nanswer\nsecond line",
+    "reaction": null,
+    "quote": {
+     "quoted": "quoted more",
+     "body": "answer\nsecond line"
+    },
+    "snippet": "answer\nsecond line"
+   },
+   {
+    "text": "plain text",
+    "reaction": null,
+    "quote": null,
+    "snippet": "plain text"
+   },
+   {
+    "text": "  Loved “padded”  ",
+    "reaction": {
+     "emoji": "❤️",
+     "to": "padded",
+     "kind": null,
+     "removed": false
+    },
+    "quote": null,
+    "snippet": "❤️ to “padded”"
+   }
+  ],
+  "reactionText": [
+   {
+    "emoji": "❤️",
+    "to": "hi",
+    "kind": null,
+    "removed": false,
+    "text": "Loved “hi”"
+   },
+   {
+    "emoji": "👍",
+    "to": "Running late, 10 min",
+    "kind": null,
+    "removed": false,
+    "text": "Liked “Running late, 10 min”"
+   },
+   {
+    "emoji": "👎",
+    "to": "",
+    "kind": "image",
+    "removed": false,
+    "text": "Disliked an image"
+   },
+   {
+    "emoji": "😂",
+    "to": null,
+    "kind": "video",
+    "removed": false,
+    "text": "Laughed at a video"
+   },
+   {
+    "emoji": "‼️",
+    "to": "x",
+    "kind": null,
+    "removed": false,
+    "text": "Emphasized “x”"
+   },
+   {
+    "emoji": "❓",
+    "to": "x",
+    "kind": null,
+    "removed": false,
+    "text": "Questioned “x”"
+   },
+   {
+    "emoji": "😮",
+    "to": "hi there",
+    "kind": null,
+    "removed": false,
+    "text": "Reacted 😮 to “hi there”"
+   },
+   {
+    "emoji": "🙏",
+    "to": null,
+    "kind": "audio",
+    "removed": false,
+    "text": "Reacted 🙏 to an audio message"
+   },
+   {
+    "emoji": "❤️",
+    "to": "hi",
+    "kind": null,
+    "removed": true,
+    "text": "Removed a heart from “hi”"
+   },
+   {
+    "emoji": "👍",
+    "to": null,
+    "kind": "image",
+    "removed": true,
+    "text": "Removed a like from an image"
+   },
+   {
+    "emoji": "😮",
+    "to": "hi",
+    "kind": null,
+    "removed": true,
+    "text": "Removed 😮 from “hi”"
+   },
+   {
+    "emoji": "😮",
+    "to": null,
+    "kind": "file",
+    "removed": true,
+    "text": "Removed 😮 from an attachment"
+   },
+   {
+    "emoji": "😮",
+    "to": null,
+    "kind": "nonsense",
+    "removed": false,
+    "text": "Reacted 😮 to an attachment"
+   }
+  ],
+  "quoteText": [
+   {
+    "original": "Running late,  10 min\nsecond line",
+    "kind": null,
+    "reply": "No rush",
+    "text": "> Running late, 10 min second line\nNo rush"
+   },
+   {
+    "original": "",
+    "kind": "image",
+    "reply": "nice",
+    "text": "> Picture\nnice"
+   },
+   {
+    "original": "",
+    "kind": null,
+    "reply": "ok",
+    "text": "> Attachment\nok"
+   },
+   {
+    "original": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "kind": null,
+    "reply": " r ",
+    "text": "> xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…\nr"
+   }
+  ],
+  "sameWords": [
+   [
+    "“Running late”",
+    "Running  late",
+    true
+   ],
+   [
+    "Running late, 10 min and then some more wo…",
+    "Running late, 10 min and then some more words here",
+    true
+   ],
+   [
+    "Running late, 10 min and then some more wo...",
+    "Running late, 10 min and then some more words here",
+    true
+   ],
+   [
+    "hi…",
+    "hi there",
+    false
+   ],
+   [
+    "hi",
+    "hi there",
+    false
+   ],
+   [
+    "",
+    "",
+    false
+   ],
+   [
+    "A",
+    "a",
+    true
+   ],
+   [
+    "ＡＢＣ",
+    "ABC",
+    true
+   ],
+   [
+    "On my way.",
+    "On my way",
+    true
+   ],
+   [
+    "On my way",
+    "On my way!",
+    true
+   ],
+   [
+    "Hi, is the bike…",
+    "Hi, is the bike still for sale?",
+    true
+   ],
+   [
+    "ok…",
+    "ok see you",
+    false
+   ],
+   [
+    "ok",
+    "ok.",
+    true
+   ]
+  ]
+ }
 }

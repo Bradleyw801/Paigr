@@ -59,12 +59,17 @@ final class Words {
     }
 
     private static final String EMOJI = "[^\\p{L}\\p{N}\\s\"“”]{1,12}";
-    private static final String WHAT = "(?:[“\"]([\\s\\S]+)[”\"]|(" + String.join("|", KIND_WORDS.keySet()) + "))";
+    /** The opening and closing quotes phones put round the words (straight, curly, low-9, guillemets, single). */
+    private static final String OPEN = "[“\"„«‘']", CLOSE = "[”\"“»’']";
+    /** What a reaction names: quoted words, or a kind of attachment. */
+    private static final String WHAT = "(?:" + OPEN + "([\\s\\S]+?)" + CLOSE + "|(" + String.join("|", KIND_WORDS.keySet()) + "))";
+    /** The same, as Google writes it: also "your message", and words with no quotes round them. */
+    private static final String WHAT_G = "(?:" + OPEN + "([\\s\\S]+?)" + CLOSE + "|(" + String.join("|", KIND_WORDS.keySet()) + ")|(your message)|([\\s\\S]+?))";
     private static final Pattern[] REACTION = {
-            Pattern.compile("^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) " + WHAT + "$"),
-            Pattern.compile("^Reacted (" + EMOJI + ") to " + WHAT + "$"),
-            Pattern.compile("^Removed (a heart|a like|a dislike|a laugh|an exclamation|a question mark|" + EMOJI + ") from " + WHAT + "$"),
-            Pattern.compile("^(" + EMOJI + ") to " + WHAT + "$")
+            Pattern.compile("^(Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) " + WHAT + "\\.?$"),
+            Pattern.compile("^(?:[\\s\\S]{1,60}? )?[Rr]eacted (?:with )?(" + EMOJI + ") to " + WHAT_G + "\\.?$"),
+            Pattern.compile("^Removed (a heart|a like|a dislike|a laugh|an exclamation|a question mark|" + EMOJI + ") from " + WHAT + "\\.?$"),
+            Pattern.compile("^(" + EMOJI + ") to " + WHAT_G + "\\.?$")
     };
     private static final Pattern QUOTE_LINE = Pattern.compile("^>( |$)");
     private static final Pattern CUT = Pattern.compile("(\\.\\.\\.|…)$");
@@ -87,10 +92,17 @@ final class Words {
 
         /** What it's to, in a few words. */
         String what() {
-            return to != null ? "“" + to + "”" : KIND_SAID.containsKey(kind) ? KIND_SAID.get(kind) : "an attachment";
+            return to != null ? "“" + to + "”" : "own".equals(kind) ? "your message" : KIND_SAID.containsKey(kind) ? KIND_SAID.get(kind) : "an attachment";
         }
     }
 
+    /**
+     * The forms read: Apple's (Loved “hi”, Reacted 😮 to “hi”, Removed a heart from “hi”, Liked an image) and Google's
+     * (👍 to “hi”; Reacted 👍 to “hi”, with or without the quotes, a name in front, or "your message" in place of the
+     * words). An emoji is anything that isn't letters, digits or quotes, but a form that starts with one wants a real
+     * symbol in it, so a line like "- to do" isn't a reaction. `kind` is "own" for "your message": the reader's own
+     * newest message.
+     */
     static Reaction reaction(String text) {
         String s = text == null ? "" : text.trim();
         for (int i = 0; i < REACTION.length; i++) {
@@ -98,10 +110,22 @@ final class Words {
             if (!m.matches()) continue;
             String first = m.group(1);
             String emoji = i == 0 ? REACT_WORDS.get(first) : i == 2 && REMOVE_WORDS.containsKey(first) ? REMOVE_WORDS.get(first) : first;
-            if (emoji == null) continue;
-            return new Reaction(emoji, m.group(2), m.group(3) != null ? KIND_WORDS.get(m.group(3)) : null, i == 2);
+            if (emoji == null || (i != 0 && !(i == 2 && REMOVE_WORDS.containsKey(first)) && !symbol(emoji))) continue;
+            String to = m.group(2);
+            String kind = m.group(3) != null ? KIND_WORDS.get(m.group(3)) : null;
+            if (i == 1 || i == 3) {
+                if (m.group(4) != null) kind = "own";
+                else if (m.group(5) != null) to = m.group(5).trim();
+            }
+            if (to == null && kind == null) continue;
+            return new Reaction(emoji, to, kind, i == 2);
         }
         return null;
+    }
+
+    /** Whether there is a symbol (an emoji, not punctuation such as a dash) in what matched as one. */
+    private static boolean symbol(String emoji) {
+        return emoji.codePoints().anyMatch(cp -> Character.getType(cp) == Character.OTHER_SYMBOL || cp == 0x203C || cp == 0x2049);
     }
 
     /** The text that reacts with `emoji` to a message: its words, or the kind of attachment it is (reaction()'s kinds). */
@@ -160,17 +184,24 @@ final class Words {
         return "> " + line + "\n" + (reply == null ? "" : reply.trim());
     }
 
+    private static final Pattern TRAILING = Pattern.compile("[.!?,;:\\s]+$");
+
     private static String even(String s) {
         return Crypto.normText(s).replace("“", "").replace("”", "").replace("\"", "").toLowerCase(Locale.ROOT);
     }
 
-    /** Whether a reaction's or a quote's words name a message that said `b` (spacing and quotes evened out, a cut allowed). */
+    /**
+     * Whether a reaction's or a quote's words name a message that said `b`: spacing and quotes evened out, the end's
+     * punctuation too (a phone quoting "ok." may write "ok"), and a cut allowed (a quote cut short, ending in …).
+     */
     static boolean sameWords(String a, String b) {
         String x = even(a), y = even(b);
         if (x.isEmpty() || y.isEmpty()) return false;
         if (x.equals(y)) return true;
         String cut = CUT.matcher(x).replaceFirst("").trim();
-        return cut.length() >= 20 && !cut.equals(x) && y.startsWith(cut);
+        if (cut.length() >= 12 && !cut.equals(x) && y.startsWith(cut)) return true;
+        String xs = TRAILING.matcher(x).replaceFirst(""), ys = TRAILING.matcher(y).replaceFirst("");
+        return !xs.isEmpty() && xs.equals(ys);
     }
 
     /** A text as a list or a notification shows it: a reaction in a few words, a quoted reply by its answer. */

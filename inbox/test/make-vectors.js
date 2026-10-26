@@ -374,6 +374,168 @@ vectors.words = {
    "snippet": "Removed ❓ from “why”"
   },
   {
+   "text": "Reacted 👍 to \"On my way\"",
+   "reaction": {
+    "emoji": "👍",
+    "to": "On my way",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “On my way”"
+  },
+  {
+   "text": "Reacted 👍 to On my way",
+   "reaction": {
+    "emoji": "👍",
+    "to": "On my way",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “On my way”"
+  },
+  {
+   "text": "Reacted 👍 to On my way.",
+   "reaction": {
+    "emoji": "👍",
+    "to": "On my way",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “On my way”"
+  },
+  {
+   "text": "Maya Chen reacted ❤️ to “Doors open at 7”",
+   "reaction": {
+    "emoji": "❤️",
+    "to": "Doors open at 7",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "❤️ to “Doors open at 7”"
+  },
+  {
+   "text": "Reacted with 😂 to “lol”",
+   "reaction": {
+    "emoji": "😂",
+    "to": "lol",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "😂 to “lol”"
+  },
+  {
+   "text": "👍 to hey there",
+   "reaction": {
+    "emoji": "👍",
+    "to": "hey there",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “hey there”"
+  },
+  {
+   "text": "Reacted 👍 to your message",
+   "reaction": {
+    "emoji": "👍",
+    "to": null,
+    "kind": "own",
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to your message"
+  },
+  {
+   "text": "❤️ to your message.",
+   "reaction": {
+    "emoji": "❤️",
+    "to": null,
+    "kind": "own",
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "❤️ to your message"
+  },
+  {
+   "text": "Loved ‘single quotes’",
+   "reaction": {
+    "emoji": "❤️",
+    "to": "single quotes",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "❤️ to “single quotes”"
+  },
+  {
+   "text": "Liked „low quotes“",
+   "reaction": {
+    "emoji": "👍",
+    "to": "low quotes",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “low quotes”"
+  },
+  {
+   "text": "Reacted 👍 to «guillemets»",
+   "reaction": {
+    "emoji": "👍",
+    "to": "guillemets",
+    "kind": null,
+    "removed": false
+   },
+   "quote": null,
+   "snippet": "👍 to “guillemets”"
+  },
+  {
+   "text": "Removed 👍 from an image",
+   "reaction": {
+    "emoji": "👍",
+    "to": null,
+    "kind": "image",
+    "removed": true
+   },
+   "quote": null,
+   "snippet": "Removed 👍 from a picture"
+  },
+  {
+   "text": "- to do list",
+   "reaction": null,
+   "quote": null,
+   "snippet": "- to do list"
+  },
+  {
+   "text": ":) to be honest",
+   "reaction": null,
+   "quote": null,
+   "snippet": ":) to be honest"
+  },
+  {
+   "text": "hello to “you”",
+   "reaction": null,
+   "quote": null,
+   "snippet": "hello to “you”"
+  },
+  {
+   "text": "— to be fair",
+   "reaction": null,
+   "quote": null,
+   "snippet": "— to be fair"
+  },
+  {
+   "text": "I reacted to it",
+   "reaction": null,
+   "quote": null,
+   "snippet": "I reacted to it"
+  },
+  {
    "text": "I Loved “x”",
    "reaction": null,
    "quote": null,
@@ -411,9 +573,14 @@ vectors.words = {
   },
   {
    "text": "👍 to nothing",
-   "reaction": null,
+   "reaction": {
+    "emoji": "👍",
+    "to": "nothing",
+    "kind": null,
+    "removed": false
+   },
    "quote": null,
-   "snippet": "👍 to nothing"
+   "snippet": "👍 to “nothing”"
   },
   {
    "text": "Liked “multi\nline”",
@@ -656,6 +823,31 @@ vectors.words = {
   [
    "ＡＢＣ",
    "ABC",
+   true
+  ],
+  [
+   "On my way.",
+   "On my way",
+   true
+  ],
+  [
+   "On my way",
+   "On my way!",
+   true
+  ],
+  [
+   "Hi, is the bike…",
+   "Hi, is the bike still for sale?",
+   true
+  ],
+  [
+   "ok…",
+   "ok see you",
+   false
+  ],
+  [
+   "ok",
+   "ok.",
    true
   ]
  ]

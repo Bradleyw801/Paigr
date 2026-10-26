@@ -96,6 +96,11 @@ final class Notifier {
                 .build();
     }
 
+    /** The notification was swiped away: the next text in that conversation starts a fresh one, not the old list again. */
+    synchronized void dismissed(String conv) {
+        if (conv != null) recent.remove(conv);
+    }
+
     /** The conversation is on screen: its notification goes away. */
     synchronized void clear(String conv) {
         if (conv == null) return;
@@ -170,8 +175,14 @@ final class Notifier {
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(false)
                 .setContentIntent(open(conv))
+                .setDeleteIntent(swipedAway(conv))
                 .setNumber(list.size())
                 .build();
+    }
+
+    private PendingIntent swipedAway(String conv) {
+        Intent i = new Intent(context, Keepalive.class).setAction(Keepalive.ACTION_DISMISSED).putExtra(MainActivity.EXTRA_CONV, conv);
+        return PendingIntent.getBroadcast(context, idFor(conv), i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
     }
 
     /** Who a message is from, as it opened here: its own sender or name, or "Paigr" for one that didn't open. */

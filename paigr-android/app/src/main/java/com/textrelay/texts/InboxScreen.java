@@ -24,6 +24,7 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.PopupWindow;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -42,6 +43,8 @@ final class InboxScreen extends Screen {
     private final Ui.Light bannerLight;
     private final TextView bannerText;
     private final TextView bannerAction;
+    private final FrameLayout more;
+    private final LinearLayout power;
     final ListView list;
     private final Pull pull;
     private final LinearLayout empty;
@@ -82,6 +85,8 @@ final class InboxScreen extends Screen {
         clp.setMarginEnd(ui.dp(4));
         titleRow.addView(chip, clp);
         titleRow.addView(ui.iconButton(R.drawable.ic_search, "Search", ui.text, v -> startSearch(0)));
+        more = ui.iconButton(R.drawable.ic_more, "More", ui.text, v -> moreMenu(v));
+        titleRow.addView(more);
         titleRow.addView(ui.iconButton(R.drawable.ic_gear, "Settings", ui.text, v -> a.openSettings()));
         header.addView(titleRow);
 
@@ -141,6 +146,28 @@ final class InboxScreen extends Screen {
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         blp.setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(6));
         header.addView(banner, blp);
+
+        // Until Android lets Paigr run while the phone sleeps, texts can wait for its next waking: say so, once a week.
+        power = new LinearLayout(a);
+        power.setGravity(Gravity.CENTER_VERTICAL);
+        power.setPadding(ui.dp(12), ui.dp(4), ui.dp(4), ui.dp(4));
+        power.setVisibility(View.GONE);
+        power.setBackground(ui.rounded(Ui.blend(ui.surface, ui.warn, ui.dark ? 0.16f : 0.1f), 14));
+        TextView powerText = ui.label("Texts can be late while this phone sleeps. Allow background use so Paigr keeps listening.", 13.5f, Ui.BOLD, ui.text);
+        powerText.setPadding(0, ui.dp(4), ui.dp(6), ui.dp(4));
+        power.addView(powerText, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        TextView later = ui.textButton("Not now", ui.text2, v -> {
+            a.prefs.snoozePower();
+            power.setVisibility(View.GONE);
+        });
+        later.setPadding(ui.dp(8), ui.dp(8), ui.dp(8), ui.dp(8));
+        power.addView(later);
+        TextView allow = ui.textButton("Allow", ui.link, v -> askBackground());
+        allow.setPadding(ui.dp(8), ui.dp(8), ui.dp(10), ui.dp(8));
+        power.addView(allow);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        plp.setMargins(ui.dp(12), 0, ui.dp(12), ui.dp(6));
+        header.addView(power, plp);
         col.addView(header);
 
         list = new ListView(a);
@@ -161,6 +188,12 @@ final class InboxScreen extends Screen {
             if (c == null) return;
             if (searchRow.getVisibility() == View.VISIBLE) hideKeyboard();
             a.openConversation(c.conv);
+        });
+        list.setOnItemLongClickListener((p, v, pos, id) -> {
+            Model.Conv c = adapter.getItem(pos);
+            if (c == null) return false;
+            rowMenu(v, c);
+            return true;
         });
 
         FrameLayout body = new FrameLayout(a);
@@ -190,6 +223,75 @@ final class InboxScreen extends Screen {
         relay();
     }
 
+    // ------------------------------------------------------------------ menus
+
+    private int unreadConversations() {
+        int n = 0;
+        for (Model.Conv c : inbox.convs.values()) if (c.unread > 0) n++;
+        return n;
+    }
+
+    /** The list's menu: what there is to do with every conversation at once. */
+    private void moreMenu(View anchor) {
+        int n = unreadConversations();
+        PopupWindow pop = popup();
+        LinearLayout menu = (LinearLayout) pop.getContentView();
+        menu.addView(action(R.drawable.ic_done_all, n == 0 ? "Nothing unread" : "Mark all as read", n > 0, () -> {
+            pop.dismiss();
+            inbox.markAllRead();
+            a.say(n == 1 ? "1 conversation marked read." : n + " conversations marked read.", 2000);
+        }));
+        pop.showAsDropDown(anchor, -ui.dp(120), -ui.dp(6));
+        menu.getChildAt(0).requestFocus();
+    }
+
+    /** One conversation's menu, from a long press on its row. */
+    private void rowMenu(View anchor, Model.Conv c) {
+        PopupWindow pop = popup();
+        LinearLayout menu = (LinearLayout) pop.getContentView();
+        menu.addView(action(R.drawable.ic_check, c.unread > 0 ? "Mark as read" : "Read", c.unread > 0, () -> {
+            pop.dismiss();
+            inbox.markRead(c.conv, true);
+        }));
+        int n = unreadConversations();
+        if (n > (c.unread > 0 ? 1 : 0)) menu.addView(action(R.drawable.ic_done_all, "Mark all as read", true, () -> {
+            pop.dismiss();
+            inbox.markAllRead();
+            a.say(n + " conversations marked read.", 2000);
+        }));
+        pop.showAsDropDown(anchor, ui.dp(60), -anchor.getHeight() / 2);
+        menu.getChildAt(0).requestFocus();
+    }
+
+    private PopupWindow popup() {
+        LinearLayout menu = new LinearLayout(a);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(ui.dp(6), ui.dp(6), ui.dp(6), ui.dp(6));
+        menu.setBackground(ui.rounded(ui.dark ? ui.surface2 : ui.surface, 16));
+        menu.setElevation(ui.dp(8));
+        PopupWindow pop = new PopupWindow(menu, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        pop.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
+        pop.setElevation(ui.dp(8));
+        return pop;
+    }
+
+    private View action(int icon, String label, boolean enabled, Runnable onClick) {
+        TextView t = ui.label(label, 15f, Ui.BOLD, enabled ? ui.text : ui.text3);
+        Drawable d = a.getDrawable(icon).mutate();
+        d.setTint(enabled ? ui.text2 : ui.text3);
+        d.setBounds(0, 0, ui.dp(19), ui.dp(19));
+        t.setCompoundDrawablesRelative(d, null, null, null);
+        t.setCompoundDrawablePadding(ui.dp(12));
+        t.setPadding(ui.dp(12), ui.dp(11), ui.dp(18), ui.dp(11));
+        t.setBackground(ui.pressable(12));
+        t.setFocusable(enabled);
+        t.setClickable(enabled);
+        t.setEnabled(enabled);
+        t.setContentDescription(label);
+        if (enabled) t.setOnClickListener(v -> onClick.run());
+        return t;
+    }
+
     /** The highlight a row gets: a ripple under a finger, a filled bar for the Sidephone's arrows. */
     private Drawable selector() {
         StateListDrawable keys = new StateListDrawable();
@@ -215,7 +317,29 @@ final class InboxScreen extends Screen {
         inbox.view = "inbox";
         render();
         relay();
+        powerBanner();
         if (!list.hasFocus() && !search.hasFocus()) list.requestFocus();
+    }
+
+    /** Whether the background-use banner shows: linked, alerts on, not yet allowed, not snoozed. */
+    void powerBanner() {
+        android.os.PowerManager pm = a.getSystemService(android.os.PowerManager.class);
+        boolean exempt = pm == null || pm.isIgnoringBatteryOptimizations(a.getPackageName());
+        boolean show = !exempt && a.prefs.paired() && !Prefs.ALERT_OFF.equals(a.prefs.alertMode()) && !a.prefs.powerSnoozed();
+        power.setVisibility(show ? View.VISIBLE : View.GONE);
+    }
+
+    private void askBackground() {
+        try {
+            a.startActivity(new android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:" + a.getPackageName())));
+        } catch (android.content.ActivityNotFoundException e) {
+            try {
+                a.startActivity(new android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+            } catch (android.content.ActivityNotFoundException ignored) {
+                a.say("This phone has no background-use setting to open.", 3000);
+            }
+        }
     }
 
     @Override

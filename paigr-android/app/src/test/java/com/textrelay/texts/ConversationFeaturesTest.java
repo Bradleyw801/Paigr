@@ -294,6 +294,74 @@ public class ConversationFeaturesTest {
         c.pause().stop().destroy();
     }
 
+    // ------------------------------------------------------------------ marking read
+
+    @Test
+    public void markAllAsReadClearsEveryCountHereAndOnTheInboxAndTheNotifications() throws Exception {
+        RealInbox s = start("demo");
+        ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
+        MainActivity a = c.get();
+        waitFor("the list", () -> a.inbox.convs.size() >= 9);
+        Model.Conv maya = named(a, "Maya Chen");
+        Model.Conv crew = named(a, "Climbing crew");
+        assertEquals(2, maya.unread);
+        assertEquals(3, crew.unread);
+        // Two notifications stand, as if the texts had arrived while the app was closed.
+        android.app.NotificationManager nm = app.getSystemService(android.app.NotificationManager.class);
+        SyncService.notifier(app).show(java.util.Arrays.asList(
+                new JSONObject().put("conv", maya.conv).put("name", "Maya Chen").put("sender", "Maya Chen").put("text", "Doors open at 7").put("ts", System.currentTimeMillis()),
+                new JSONObject().put("conv", crew.conv).put("name", "Climbing crew").put("sender", "Jordan").put("group", true).put("text", "Who needs a ride?").put("ts", System.currentTimeMillis())));
+        assertEquals(3, Shadows.shadowOf(nm).getAllNotifications().size());   // two conversations and the summary
+
+        // One conversation from its row's long press: only that one.
+        android.widget.ListView rows = a.list.list;
+        int at = -1;
+        for (int i = 0; i < rows.getAdapter().getCount(); i++) if (rows.getAdapter().getItem(i) == crew || ((Model.Conv) rows.getAdapter().getItem(i)).conv.equals(crew.conv)) at = i;
+        assertTrue(at >= 0);
+        rows.setSelection(at);
+        ShadowLooper.idleMainLooper();
+        rows.getOnItemLongClickListener().onItemLongClick(rows, rows.getChildAt(Math.max(0, at - rows.getFirstVisiblePosition())), at, at);
+        View one = find(menu().getContentView(), "Mark as read");
+        assertNotNull(one);
+        one.performClick();
+        ShadowLooper.idleMainLooper();
+        assertEquals(0, named(a, "Climbing crew").unread);
+        assertEquals(2, named(a, "Maya Chen").unread);
+        assertNull(Shadows.shadowOf(nm).getNotification(Notifier.idFor(crew.conv)));
+        assertNotNull(Shadows.shadowOf(nm).getNotification(Notifier.idFor(maya.conv)));
+
+        // Everything, from the list's menu: counts here, counts on the inbox, and the notifications.
+        find(a.list.root, "More").performClick();
+        ShadowLooper.idleMainLooper();
+        View all = find(menu().getContentView(), "Mark all as read");
+        assertNotNull(all);
+        all.performClick();
+        ShadowLooper.idleMainLooper();
+        for (Model.Conv cv : a.inbox.convs.values()) assertEquals(cv.name, 0, cv.unread);
+        assertEquals(0, Shadows.shadowOf(nm).getAllNotifications().size());
+        String screen = allText(a.list.root);
+        assertFalse(screen, screen.contains("marked read") && !screen.contains("1 conversation"));
+        waitFor("the inbox's counts", () -> {
+            try {
+                JSONObject convs = s.dump().getJSONObject("v2-convs");
+                for (java.util.Iterator<String> k = convs.keys(); k.hasNext(); ) if (convs.getJSONObject(k.next()).optInt("unread", 0) > 0) return false;
+                return true;
+            } catch (Exception e) {
+                return false;
+            }
+        });
+        // A sync afterwards brings nothing back.
+        waitFor("a sync", () -> a.inbox.convs.size() >= 9);
+        for (Model.Conv cv : a.inbox.convs.values()) assertEquals(cv.name, 0, cv.unread);
+        // With nothing unread the menu says so, and offers nothing to do.
+        find(a.list.root, "More").performClick();
+        ShadowLooper.idleMainLooper();
+        assertNotNull(find(menu().getContentView(), "Nothing unread"));
+        assertFalse(find(menu().getContentView(), "Nothing unread").isEnabled());
+        menu().dismiss();
+        c.pause().stop().destroy();
+    }
+
     // ------------------------------------------------------------------ attachments
 
     private static byte[] png(int w, int h) {

@@ -33,8 +33,10 @@ final class Sync {
 
     private final Prefs prefs;
     private final Listener listener;
-    /** True while the app's screen is open; the page syncs itself then, so the service only keeps its place. */
+    /** True while the app's screen is open; the app syncs itself then, so the service only keeps its place. */
     volatile boolean screenOpen;
+    /** The conversation on screen while it is open: a text in it is seen as it arrives, so it isn't announced. */
+    volatile String openConv;
     volatile boolean doorbellConnected;
     /** The private inbox, when this phone is in one: what it announces is opened with its key. */
     volatile Link link;
@@ -59,7 +61,13 @@ final class Sync {
         }
         List<JSONObject> incoming = new ArrayList<>();
         JSONObject r = read(hedy, feed, incoming);
-        if (!incoming.isEmpty() && !screenOpen) listener.onIncoming(incoming);
+        // With the app open, a text in the conversation on screen is being read as it arrives; one in any other
+        // conversation is announced like any other, so it isn't missed because the list happened to be open.
+        if (screenOpen) {
+            String open = openConv;
+            if (open != null) incoming.removeIf(m -> open.equals(m.optString("conv", "")));
+        }
+        if (!incoming.isEmpty()) listener.onIncoming(incoming);
         if (r != null) relayState(r.optJSONObject("relay"));
         return interval();
     }

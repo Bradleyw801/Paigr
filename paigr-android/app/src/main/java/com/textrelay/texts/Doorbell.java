@@ -30,7 +30,7 @@ final class Doorbell {
     }
 
     private static final String TAG = "Doorbell";
-    private static final int PING_SECONDS = 240;            // well under the 10-minute idle timeout
+    private static final int PING_SECONDS = 75;             // a dead socket shows within three minutes, not eight
     private static final long REFRESH_MS = 100 * 60_000L;   // reconnect before the 2-hour connection ceiling
 
     private final String base;

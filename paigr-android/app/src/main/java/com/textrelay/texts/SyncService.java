@@ -8,8 +8,13 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 
 import java.io.IOException;
 
@@ -34,9 +39,13 @@ public class SyncService extends Service {
     private volatile boolean running;
     private long wrapTried;
 
+    /** The running service, for the keepalive and the network to poke; null while it isn't running. */
+    private static volatile SyncService instance;
+
     static void start(Context context) {
         Intent intent = new Intent(context, SyncService.class);
         if (Prefs.ALERT_OFF.equals(new Prefs(context).alertMode())) {
+            Keepalive.cancel(context);
             context.stopService(intent);
             return;
         }
@@ -45,10 +54,27 @@ public class SyncService extends Service {
         } catch (RuntimeException ignored) {
             // Background-start restrictions; the next time the app opens it starts again.
         }
+        Keepalive.schedule(context);
     }
 
     static void stop(Context context) {
+        Keepalive.cancel(context);
         context.stopService(new Intent(context, SyncService.class));
+    }
+
+    /**
+     * The keepalive alarm: the service is started if it was stopped, a stale socket is dropped so a fresh one opens,
+     * and the inbox is checked once, now. Runs while the alarm's wake lock holds; the check takes one of its own.
+     */
+    static void nudge(Context context) {
+        SyncService running = instance;
+        if (running == null) {
+            start(context);
+            return;
+        }
+        Doorbell d = running.doorbell;
+        if (d != null && !d.isConnected()) d.reconnect();
+        wake();
     }
 
     static Notifier notifier(Context context) {
@@ -83,10 +109,14 @@ public class SyncService extends Service {
         }
     }
 
-    /** The screen is open: the page syncs itself, nothing needs announcing. */
+    /** The screen is open (and which conversation is on it): a text for that one needs no announcing. */
     static void setScreenOpen(Context context, boolean open) {
         sync(context).screenOpen = open;
         if (open) new Prefs(context).touchUsed();
+    }
+
+    static void setOpenConversation(Context context, String conv) {
+        sync(context).openConv = conv;
     }
 
     static void createChannels(Context context) {
@@ -107,10 +137,42 @@ public class SyncService extends Service {
         return c != null && c.getImportance() == NotificationManager.IMPORTANCE_NONE;
     }
 
+    private ConnectivityManager.NetworkCallback network;
+
     @Override
     public void onCreate() {
         super.onCreate();
         createChannels(this);
+        instance = this;
+        watchNetwork();
+    }
+
+    /**
+     * A network coming or going: Wi-Fi to mobile and back leaves the socket silently dead until its next ping shows
+     * it, so a new network drops it at once and a fresh one opens on the new path, with a check right away.
+     */
+    private void watchNetwork() {
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm == null) return;
+        network = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network n) {
+                Doorbell d = doorbell;
+                if (d != null) d.reconnect();
+                wake();
+            }
+
+            @Override
+            public void onLost(Network n) {
+                Sync s = sync;
+                if (s != null) s.doorbellConnected = false;
+            }
+        };
+        try {
+            cm.registerNetworkCallback(new NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build(), network);
+        } catch (RuntimeException e) {
+            network = null;   // too many callbacks, or no permission: the pings catch a dead socket instead
+        }
     }
 
     @Override
@@ -122,6 +184,7 @@ public class SyncService extends Service {
             startForeground(NOTIFICATION_ID, n);
         }
         startLoop();
+        Keepalive.schedule(this);
         return START_STICKY;
     }
 
@@ -163,6 +226,9 @@ public class SyncService extends Service {
                 return;
             }
             long wait;
+            // The CPU stays awake for the check: a doorbell ring that woke the phone would otherwise let it doze off
+            // again before the inbox answered, and the text would wait for the next alarm.
+            PowerManager.WakeLock lock = Keepalive.wake(this, "check");
             try {
                 Link l = prefs.link();
                 s.link = l;
@@ -184,6 +250,8 @@ public class SyncService extends Service {
             } catch (IOException | RuntimeException e) {
                 wait = backoff;
                 backoff = Math.min(backoff * 2, 120_000);
+            } finally {
+                if (lock != null && lock.isHeld()) lock.release();
             }
             synchronized (signal) {
                 try {
@@ -231,6 +299,15 @@ public class SyncService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        if (instance == this) instance = null;
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm != null && network != null) {
+            try {
+                cm.unregisterNetworkCallback(network);
+            } catch (RuntimeException ignored) {
+                // never registered
+            }
+        }
         Thread t = loop;
         if (t != null) t.interrupt();
         Doorbell d = doorbell;

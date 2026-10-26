@@ -259,6 +259,15 @@ final class Prefs {
         sp.edit().putString("named2", mark).apply();
     }
 
+    /** "Not now" on the background-use banner: it stays away for a week. */
+    boolean powerSnoozed() {
+        return System.currentTimeMillis() < sp.getLong("power_snooze", 0);
+    }
+
+    void snoozePower() {
+        sp.edit().putLong("power_snooze", System.currentTimeMillis() + 7 * 86_400_000L).apply();
+    }
+
     long lastUsed() {
         return sp.getLong("last_used", 0);
     }

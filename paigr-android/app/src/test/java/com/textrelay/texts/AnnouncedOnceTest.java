@@ -118,6 +118,36 @@ public class AnnouncedOnceTest {
         assertTrue(String.valueOf(other.extras.getCharSequence(Notification.EXTRA_TEXT)).contains("couldn't be checked"));
     }
 
+    /**
+     * With the app open on one conversation, a text in it is being read as it arrives; a text in any other conversation
+     * is announced all the same, so nothing is missed because the list (or another thread) happened to be on screen.
+     */
+    @Test
+    public void withTheAppOpenOnlyTheConversationOnScreenGoesUnannounced() throws Exception {
+        String mom = l.convIdForTests("mom"), dad = l.convIdForTests("dad");
+        sync.screenOpen = true;
+        sync.openConv = mom;
+        long now = System.currentTimeMillis();
+        syncAnswer = page(new JSONArray()
+                .put(record(key("m1"), mom, sealed(mom, "dinner?", now - 2000)))
+                .put(record(key("d1"), dad, sealed(dad, "call me", now - 1000))));
+        sync.checkOnce(new Hedy(l));
+        assertEquals(1, announced.size());
+        assertEquals(1, announced.get(0).size());
+        assertEquals("call me", announced.get(0).get(0).optString("text"));
+        // The list is open, no conversation: everything is announced.
+        sync.openConv = null;
+        syncAnswer = page(new JSONArray().put(record(key("m2"), mom, sealed(mom, "7 then", now))));
+        sync.checkOnce(new Hedy(l));
+        assertEquals(2, announced.size());
+        assertEquals("7 then", announced.get(1).get(0).optString("text"));
+        // And what was on screen isn't announced later either: it was seen.
+        sync.screenOpen = false;
+        syncAnswer = page(new JSONArray().put(record(key("m1"), mom, sealed(mom, "dinner?", now - 2000))));
+        sync.checkOnce(new Hedy(l));
+        assertEquals(2, announced.size());
+    }
+
     /** The same in a group: a record that doesn't open, filed under the group, doesn't re-post the group's notification. */
     @Test
     public void aMessageThatDoesntOpenNeverPostsAsAGroups() throws Exception {

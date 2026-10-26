@@ -117,15 +117,22 @@ public class TextsTest {
     }
 
     @Test
-    public void nothingIsAnnouncedWhileTheScreenIsOpenButThePlaceStillMoves() throws Exception {
+    public void theConversationOnScreenIsNotAnnouncedButThePlaceStillMoves() throws Exception {
         sync.checkOnce(hedy());
         server.add("m:1000000000005:aa", "c1", "in", "Megan", "Megan", "hi");
         sync.screenOpen = true;
+        sync.openConv = "c1";
         assertEquals(Sync.SLOW_SECONDS, sync.checkOnce(hedy()));
         assertTrue(announced.isEmpty());
         sync.screenOpen = false;
         sync.checkOnce(hedy());
         assertTrue(announced.isEmpty());   // seen on screen; not news later
+        // With the app open elsewhere (the list, or another conversation), a text is announced like any other.
+        server.add("m:1000000000006:ab", "c2", "in", "Sam", "Sam", "lunch?");
+        sync.screenOpen = true;
+        sync.checkOnce(hedy());
+        assertEquals(1, announced.size());
+        assertEquals("lunch?", announced.get(0).get(0).getString("text"));
     }
 
     @Test

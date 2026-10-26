@@ -503,6 +503,7 @@ final class Inbox {
         current = conv;
         view = "thread";
         finding = false;
+        SyncService.setOpenConversation(app, conv);
         SyncService.notifier(app).clear(conv);
         Link at = link;
         Opener o = open;
@@ -550,6 +551,46 @@ final class Inbox {
         current = null;
         view = "inbox";
         finding = false;
+        SyncService.setOpenConversation(app, null);
+    }
+
+    /**
+     * Every conversation read: the counts go to zero here at once, the inbox is told one conversation at a time (it
+     * has no word for all of them), and the notifications go. A conversation whose count the inbox still has comes
+     * back unread on the next sync only if the call for it failed, and the next open marks it again.
+     */
+    void markAllRead() {
+        List<String> unread = new ArrayList<>();
+        for (Model.Conv c : convs.values()) {
+            if (c.unread > 0) {
+                c.unread = 0;
+                unread.add(c.conv);
+            }
+        }
+        SyncService.notifier(app).clearAll();
+        if (unread.isEmpty()) return;
+        tell(LIST, false);
+        Link at = link;
+        if (at == null) return;
+        io.execute(() -> {
+            for (String conv : unread) {
+                try {
+                    new Hedy(at).post("/v2/read", new JSONObject().put("conv", conv));
+                } catch (IOException | JSONException ignored) {
+                    // the next open of that conversation marks it again
+                }
+            }
+        });
+    }
+
+    /** One conversation read, from the list. */
+    void markRead(String conv, boolean fromList) {
+        Model.Conv c = convs.get(conv);
+        if (c == null || c.unread == 0) return;
+        c.unread = 0;
+        SyncService.notifier(app).clear(conv);
+        tell(LIST, false);
+        markRead(conv);
     }
 
     private void markRead(String conv) {

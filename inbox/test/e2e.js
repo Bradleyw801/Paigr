@@ -67,7 +67,7 @@ const R1 = { "x-hedy-app-key": "hak_relay.test" };
     const relay = { token: TR2.newToken() };
     const code = TR2.newCode();
     const s = await TR2.linkSecrets(code);
-    r = await call("/v2/link/ask", { body: { lookup: s.lookup, token: relay.token, role: "relay", label: "Unihertz Titan 2 Elite" } });
+    r = await call("/v2/link/ask", { body: { lookup: s.lookup, token: relay.token, role: "relay", label: "Example Phone 2" } });
     assert.strictEqual(r._status, 200, JSON.stringify(r));
     await page.click("#move-banner button");
     await page.fill("#approve-input", TR2.prettyCode(code).toLowerCase());
@@ -89,7 +89,7 @@ const R1 = { "x-hedy-app-key": "hak_relay.test" };
     await sleep(1500);
     assert.ok(!JSON.parse(await page.evaluate(() => localStorage.getItem("relay.moved2") || "{}")).started, "nothing moves before it has");
     // as Relay sends it: its words and its model sealed, numbers and switches in the open
-    const sn = await TR2.sealJson(relay.keys.enc, { note: "Could not read an attachment (image/heic)", history: "", model: "Unihertz Titan 2 Elite" }, TR2.AAD.note);
+    const sn = await TR2.sealJson(relay.keys.enc, { note: "Could not read an attachment (image/heic)", history: "", model: "Example Phone 2" }, TR2.AAD.note);
     r = await call("/v2/relay/heartbeat", { headers: H, body: { listening: true, sn } });
     assert.strictEqual(r._status, 200, JSON.stringify(r));
 

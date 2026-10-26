@@ -68,7 +68,7 @@ final class InboxScreen extends Screen {
         TextView title = ui.label("Paigr", 27f, Ui.BLACK, ui.text);
         title.setLetterSpacing(-0.025f);
         title.setSingleLine(true);
-        // On the Sidephone's width the chip and three buttons leave the title little room: it shrinks before it wraps.
+        // On a narrow screen the chip and three buttons leave the title little room: it shrinks before it wraps.
         title.setAutoSizeTextTypeUniformWithConfiguration(18, 27, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
         titleRow.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
@@ -295,7 +295,7 @@ final class InboxScreen extends Screen {
         return t;
     }
 
-    /** The highlight a row gets: a ripple under a finger, a filled bar for the Sidephone's arrows. */
+    /** The highlight a row gets: a ripple under a finger, a filled bar for a keypad's arrows. */
     private Drawable selector() {
         StateListDrawable keys = new StateListDrawable();
         GradientDrawable fill = ui.rounded(ui.dark ? ui.surface : ui.surface2, 16);

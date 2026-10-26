@@ -35,7 +35,7 @@ import static org.junit.Assert.fail;
 /**
  * The app's own screens against the real inbox server (functions/inbox2.js, run by relay-hedy's test/serve.js), with a
  * stand-in relay phone: linking with one scan, texts both ways, the list from disk while the inbox is away, a phone
- * taken out of its inbox, the Sidephone's keys, and everything e2e-dishonest.js checks the web page against.
+ * taken out of its inbox, keypad keys, and everything e2e-dishonest.js checks the web page against.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, qualifiers = "w320dp-h427dp-hdpi")
@@ -324,7 +324,7 @@ public class NativeAppTest {
         c.pause().stop().destroy();
     }
 
-    // ------------------------------------------------------------------ the Sidephone's keys
+    // ------------------------------------------------------------------ keypad keys
 
     private static KeyEvent key(int code, int action, int meta) {
         long now = android.os.SystemClock.uptimeMillis();

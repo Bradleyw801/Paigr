@@ -52,7 +52,7 @@ import java.util.regex.Pattern;
 /**
  * One conversation, in its colour: the header, your bubbles and the send button wear it. Reactions sit under the
  * message they're to, a quoted reply shows what it answers, pictures and files go out from the composer, and the
- * Sidephone's arrows scroll while the keyboard types straight into the reply. Rows are bound while the list scrolls,
+ * keypad's arrows scroll while the keyboard types straight into the reply. Rows are bound while the list scrolls,
  * so nothing here makes a drawable, a formatter or a regex match it can keep from last time.
  */
 final class ThreadScreen extends Screen {

@@ -1,11 +1,12 @@
-# Text Relay v2: private inboxes
+# Paigr's protocol: private inboxes
 
-Version 2 lets any two phones work together with nothing but a scan. Every pair of phones gets its own inbox on the
-shared server (a *tenant*), and everything in it that says who or what is encrypted on the phones before it leaves
-them. The server stores and matches scrambled data; it can't read texts, names, numbers or attachments.
+This is how Paigr's inbox works (version 2). Each pair of phones gets its own inbox on the shared server (a
+*tenant*). Anything in it that says who sent what, or what it says, is encrypted on the phones before it leaves them.
+The server stores and matches data it can't read. It can't read texts, names, numbers or attachments.
 
-The server is one function (`inbox2`) behind `/v2/*`. Relay is the phone with the SIM ("relay" role). Texts, or the
-web page in a browser, is an inbox device ("inbox" role).
+The server is one function (`inbox2`) behind `/v2/*`. Paigr Relay runs on the phone with the SIM (the "relay" role).
+Paigr, or the web page in a browser, is an inbox device (the "inbox" role). The protocol's strings still say
+`textrelay` and `TEXTRELAY2`, from the project's first name, because changing them would break every existing inbox.
 
 ## Encodings
 
@@ -34,7 +35,7 @@ web page in a browser, is an inbox device ("inbox" role).
 | Field | Value |
 |---|---|
 | conversation id | `hex(mac("conv:" + localConv))[0:32]` |
-| message fp | `hex(mac("fp:" + localFp))[0:16]` (Texts' own replies keep a random `o…` id) |
+| message fp | `hex(mac("fp:" + localFp))[0:16]` (an inbox device's own replies keep a random `o…` id) |
 | match token `mt` | `hex(mac("mt:" + dir + ":" + matchText))[0:32]`, omitted when matchText is empty |
 | `e` | `seal(Kenc, JSON{text, sender, name, group, ts, fp, media:{mime, w, h, bytes}}, "tr2:m:" + conv + ":" + dir)`: `ts` and `fp` are the message's own time and keyed fingerprint (as filed, see files) |
 | `ne` | `seal(Kenc, JSON{name, group}, "tr2:n:" + conv)`, only when the message names its conversation |
@@ -187,9 +188,9 @@ id, so a name in the list is always one a device of the inbox gave itself.
 ## Linking
 
 A code is 12 symbols from `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (60 bits), shown as `XXXX-XXXX-XXXX` and in a QR code
-as `TEXTRELAY2:<server host>/<CODE>`. The QR code isn't a web address on purpose: a camera app that isn't Texts shows
+as `TEXTRELAY2:<server host>/<CODE>`. The QR code isn't a web address on purpose: a camera app that isn't Paigr shows
 it as text, rather than opening a page from the server that could read the code (and, for an invite, the inbox key in
-its box). Texts' scanner reads it; a browser types the code (a link `https://<server>/#link=<CODE>` fills it in, and
+its box). Paigr's scanner reads it; a browser types the code (a link `https://<server>/#link=<CODE>` fills it in, and
 waits for a tap). Typing is forgiving: case, spaces and dashes don't matter; O, I and L read as 0, 1 and 1 (`norm`).
 
 ```
@@ -201,7 +202,7 @@ box     = seal(boxKey, JSON{v:2, tid, key:b64u(K)}, "tr2:box")
 
 An offer lives 15 minutes and works once. Two kinds:
 
-- **ask**: a device that isn't linked (a new Relay, a browser) shows its code: `POST /v2/link/ask {lookup, token,
+- **ask**: a device that isn't linked (a new Paigr Relay, a browser) shows its code: `POST /v2/link/ask {lookup, token,
   role}` and then `POST /v2/link/wait {lookup, token}` every few seconds until it answers 200 `{tid, role, answer}`.
   `answer` is a box; opened with `boxKey` it holds the inbox key.
 - **invite**: a linked device shows a code so another device can join its inbox: `POST /v2/link/invite {lookup, box,
@@ -213,7 +214,7 @@ The scanning device calls `POST /v2/link/claim {lookup, token?}`:
   only while the device that made the invite is still in it;
 - an ask answers `{kind:"ask", role, hasRelay}` and changes nothing. The scanner then `POST /v2/link/adopt {lookup,
   answer}`: with its own token header it brings the asking device into its inbox; with `create:{tid, token}` instead
-  (an unlinked Texts scanning an unlinked Relay) it starts a new inbox with both phones in it. Adopting a relay phone
+  (an unlinked Paigr scanning an unlinked Paigr Relay) it starts a new inbox with both phones in it. Adopting a relay phone
   removes any other relay phone from that inbox, once the new one is in.
 
 Everything that could refuse (a device already in another inbox, an inbox at its 8 devices) is checked before an
@@ -247,7 +248,7 @@ token is refused from then on, and a push registration on its way when it was re
 
 Limits: the inbox key isn't changed. A removed device keeps what it saved, and it still holds the key: if the server's
 operator worked with whoever has it, they could read new texts and queue replies the relay phone would send. To cut a
-device off completely, start a new inbox: in Texts, Settings, remove the relay phone (it goes back to showing a code),
+device off completely, start a new inbox: in Paigr, Settings, remove the relay phone (it goes back to showing a code),
 then *Unlink this phone*, and scan the relay phone's new code. The new inbox starts empty. A realtime socket a removed device already had open keeps getting content-free nudges until the platform closes
 it (at most two hours); reopening it needs a ticket it can no longer get.
 
@@ -281,7 +282,7 @@ With a token: `GET /v2/ping`, `GET /v2/ticket` (a realtime ticket for `tr2/<tid>
 `POST /v2/devices/name`, `POST /v2/devices/remove` (inbox devices), `GET /v2/media?p=`,
 `POST /v2/media/put|ticket|complete`.
 
-Relay: `POST /v2/relay/ingest`, `GET /v2/relay/outbox`, `POST /v2/relay/outbox/result`, `POST /v2/relay/heartbeat`,
+Relay phone: `POST /v2/relay/ingest`, `GET /v2/relay/outbox`, `POST /v2/relay/outbox/result`, `POST /v2/relay/heartbeat`,
 `POST /v2/relay/merge`.
 
 Inbox devices: `GET /v2/inbox`, `GET /v2/thread`, `GET /v2/sync`, `POST /v2/send {conv, e, o, mt, media?}`, `POST /v2/read`,
@@ -312,21 +313,21 @@ preview}` instead of `text`, `sender`, `name`, `group` and the media details; co
 `v2-twins`, `v2-state` (relay heartbeat with index by-seen, viewer, epoch, wake, push subscriptions with the device
 that registered each, live invite, merged conversations).
 
-## The Texts app
+## The Paigr app
 
-Texts shows the page from files built into the app (`/`, `/index.html` and their scripts), never from the server.
+Paigr shows the page from files built into the app (`/`, `/index.html` and their scripts), never from the server.
 Only that page opens inside the app: any other address, on the inbox server or elsewhere, opens in the phone's
 browser, and anything else that tries to load in the app shows an empty page. The bridge that hands the page this
 phone's link (and so the inbox key) answers only after the app has just served its own page for the main frame, and
 stops answering when anything else starts loading. The WebView keeps its storage in a profile of its own
-(`setDataDirectorySuffix("own")`), so nothing an older Texts left (it loaded the page from the server), a service
+(`setDataDirectorySuffix("own")`), so nothing an older version left (it loaded the page from the server), a service
 worker above all, can serve the page or stand in for it; the old profile's folder is deleted. A bundled file that
 can't be read is an error, never the server's copy.
 
-Texts' own notifications show a message only as it opens on the phone (conversation, direction, its own time). One
-that doesn't open, or carries nothing sealed, goes in a notification of its own ("Texts: a message came in that
-couldn't be checked"), never in a conversation's and never with a name. Each message is announced once, whatever key
-the server files it under and however often it was sealed: Texts remembers the last 600 keys (only keys of the inbox's
+Paigr's own notifications show a message only as it opens on the phone (conversation, direction, its own time). One
+that doesn't open, or carries nothing sealed, goes in a notification of its own ("A message came in that couldn't
+be checked on this phone."), never in a conversation's and never with a name. Each message is announced once, whatever key
+the server files it under and however often it was sealed: Paigr remembers the last 600 keys (only keys of the inbox's
 shape, `m:<time>:<id>` in digits and lowercase letters) and the last 600 messages it announced, by the time and keyed
 fingerprint their payloads name. It announces nothing sealed at or before its floor: 10 minutes before it linked, raised
 to the time of each message it forgets (the earliest sealed go first, and never past its own clock). So a server can't

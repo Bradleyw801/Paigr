@@ -218,7 +218,7 @@ async function until(fn, what) {
   assert.strictEqual((await fetch(origin + "/")).headers.get("x-frame-options"), "DENY");
 
   // ================================================================ two phones, one scan
-  const relay = phone("relay", "Titan"), texts = phone("inbox", "SP1");
+  const relay = phone("relay", "Home phone"), texts = phone("inbox", "Pocket phone");
   await link(relay, texts);
   assert.strictEqual(relay.tid, texts.tid);
   assert.strictEqual((await call(relay, "GET", "/v2/ping")).role, "relay");

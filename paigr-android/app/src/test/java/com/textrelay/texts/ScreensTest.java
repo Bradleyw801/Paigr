@@ -27,7 +27,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * Texts' screens drawn the size of a Sidephone's screen (2.8", 480 × 640), against the real inbox server, into
+ * Paigr's screens drawn the size of a small keypad phone's screen (2.8", 480 × 640), against the real inbox server, into
  * app/build/screens: to look at, and to check that every screen draws with real data.
  */
 @RunWith(RobolectricTestRunner.class)
@@ -113,7 +113,7 @@ public class ScreensTest {
         waitFor("the list", () -> a.list != null && a.list.list.getAdapter().getCount() >= 9);
         waitFor("pictures fetched ahead", () -> a.inbox.msgs.size() >= 6);
         shot(a, theme + "-1-inbox");
-        // the Sidephone's arrows: a highlight moves through the list
+        // a keypad's arrows: a highlight moves through the list
         a.list.list.requestFocus();
         for (int code : new int[] { android.view.KeyEvent.KEYCODE_DPAD_DOWN, android.view.KeyEvent.KEYCODE_DPAD_DOWN }) {
             a.dispatchKeyEvent(new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, code));

@@ -29,7 +29,7 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.Texts">
 
-        <!-- Texts' own screens. A keypad tile snapped on or off, a turn or a dark-mode switch doesn't start it over. -->
+        <!-- Paigr's own screens. A keyboard attached or removed, a turn or a dark-mode switch doesn't start it over. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

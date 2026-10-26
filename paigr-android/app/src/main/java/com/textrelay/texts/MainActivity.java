@@ -179,7 +179,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
     }
 
     /**
-     * `s` on top, at once. No transition: a phone like the Sidephone has little to spare, and a screen that animates in
+     * `s` on top, at once. No transition: a small, slow phone has little to spare, and a screen that animates in
      * while its list is being built stutters there.
      */
     void push(Screen s) {

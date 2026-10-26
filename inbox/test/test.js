@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const { caller, col, rings, pushes, hooks } = require("./harness");
 const api = caller(require("path").join(__dirname, "../functions/api.js"));
 const pair = caller(require("path").join(__dirname, "../functions/pair.js"));
-const RELAY = "relay-phone", INBOX = "inbox-sidephone";
+const RELAY = "relay-phone", INBOX = "inbox-phone";
 const fp = (n) => n.toString(16).padStart(16, "0");
 const realNow = Date.now.bind(Date);
 let offset = 0;

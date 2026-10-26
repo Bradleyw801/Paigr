@@ -232,7 +232,7 @@ final class Ui {
 
     /**
      * A background that answers a touch with a ripple and a key press with a ring: every tappable thing here can be
-     * reached with the Sidephone's arrows and OK as well as a finger.
+     * reached with a keypad's arrows and OK as well as a finger.
      */
     Drawable pressable(Drawable content, float radiusDp) {
         Drawable mask = rounded(Color.WHITE, radiusDp);
@@ -480,7 +480,7 @@ final class Ui {
     // ------------------------------------------------------------------ the keycap badge
 
     /**
-     * A conversation's badge, drawn like a key on the Sidephone's keypad: a rounded square in the conversation's
+     * A conversation's badge, drawn like a key on a phone keypad: a rounded square in the conversation's
      * colour, lighter at the top with a darker lip at the bottom, holding initials or the group glyph.
      */
     static final class Keycap extends View {

@@ -11,7 +11,7 @@ const pair = load(path.join(root, "functions/pair.js"));
 const api2 = load(path.join(root, "functions/inbox2.js"));
 const port = Number(process.argv[2] || 8787);
 const origin = "http://127.0.0.1:" + port;
-const KEYS = { "hak_relay.test": "relay-phone", "hak_inbox.test": "inbox-sidephone" };
+const KEYS = { "hak_relay.test": "relay-phone", "hak_inbox.test": "inbox-phone" };
 const uploads = new Map();   // ticket -> { pathPrefix, contentType, maxBytes, bytes }
 let n = 0;
 base.files.createUploadTicket = async (o) => {

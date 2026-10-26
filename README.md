@@ -1,29 +1,25 @@
 # Paigr
 
-Keep your number, carry any phone.
+Paigr lets you read and answer your texts on a different phone from the one with your SIM. I built it so I could
+carry a phone without Google services and still get every text, RCS included, from my real number.
 
-Paigr turns one Android phone with your SIM into a relay, and lets you read and answer every text it gets (SMS, MMS
-and RCS, groups and pictures included) on any other phone, or in a browser. The other phone can be anything, including
-one with no Google services at all. Replies go out from your real number. Texts, names and pictures are encrypted on
-the phones before they leave them, so the server in between only holds what it can't read, and you can run that server
-yourself.
+It's two apps and a small server. Paigr Relay runs on the phone with your SIM and Google Messages. It picks up every
+text that comes in (SMS, MMS and RCS, groups and pictures too), encrypts it and sends it to your inbox on the server.
+Paigr runs on the phone you carry, and the same inbox also works in a browser. Your replies go back to the relay
+phone and out through Messages, or as SMS or MMS from the phone itself.
 
-- **Paigr Relay** goes on the phone that keeps the SIM and Google Messages. It reads Messages' notifications (and, with
-  message access, the phone's message store), seals everything and sends it to the inbox; replies come back down and
-  go out through Messages, or as SMS/MMS from the phone itself.
-- **Paigr** goes on the phone you carry: a native app that opens at once, works by touch or with a keypad, and needs no
-  Google services. Reactions, replies that quote, an emoji keyboard, and pictures, GIFs and files from the phone.
-- **The inbox** is a small server (Node, no packages) plus a web page that is the same inbox in a browser.
+Everything is encrypted on the phones before it leaves them, so the server only holds what it can't read. You can
+use my server or run your own.
 
-Setting up two phones takes one scan: Paigr Relay shows a code, Paigr scans it, and the two phones get their own
-private inbox. No account, email or password.
+Setting up two phones takes one scan. Paigr Relay shows a code, you scan it with Paigr, and the two phones get their
+own private inbox. There's no account, email or password.
 
 ## Install the apps
 
-The signed builds are on the [app pack](https://bradleyw801.github.io/sidephone-apps/): add it to F-Droid, Droid-ify
-or Sidephone's App Library for updates, or download `relay.apk` and `texts.apk` from that page directly. Builds from
-this repository install over them only if signed with the same key, which isn't published; a build of your own is a
-separate install.
+The signed builds are in [Brad White's apps](https://bradleyw801.github.io/sidephone-apps/). Add that repository to
+F-Droid or any F-Droid client to get updates, or download `relay.apk` and `texts.apk` straight from that page. If you
+build the apps yourself, your builds are signed with your own key, so they can't update the published ones. Uninstall
+those first.
 
 ## Run your own inbox server
 
@@ -32,36 +28,37 @@ docker run -d --name paigr --restart unless-stopped -e TOR=1 -v paigr-data:/data
 docker logs paigr        # shows the onion address to enter in Paigr Relay (More > Inbox server)
 ```
 
-That runs it as a Tor onion service: no domain, no open ports, no certificate, reachable from anywhere through Tor
-(install Orbot on both phones; **Connect through Tor** turns on by itself). [inbox/README.md](inbox/README.md) has
-the https setup, the settings, what it keeps and how to move phones that already have an inbox. Nothing on the server
-side is tied to the hosted inbox: the phones work the same against any server.
+That runs it as a Tor onion service. You don't need a domain, open ports or a certificate, and you can reach it from
+anywhere through Tor. Install Orbot on both phones and **Connect through Tor** turns on by itself.
+[inbox/README.md](inbox/README.md) covers the https setup, the settings, what the server keeps and how to move phones
+that already have an inbox. The phones work the same with any server.
 
-The hosted inbox at `relay--bradwhite.apps.hedyassist.com` runs the same code (`inbox/functions/`) on the Hedy
-platform; the apps point there until you enter another server.
+My hosted inbox at `relay--bradwhite.apps.hedyassist.com` runs the same code (`inbox/functions/`) on the Hedy
+platform. The apps use it until you enter another server.
 
 ## What the server sees
 
-Every message, name, attachment and device name is sealed on the phones with AES-256-GCM under a key only the phones
-have, and each seal is bound to its conversation, direction and message, so the server can't move, replay or
-reattribute anything. The server sees times, directions, sizes and keyed hashes, and nothing else; with Tor on, not
-even the phones' addresses. [inbox/PROTOCOL.md](inbox/PROTOCOL.md) is the full spec: keys, what each seal is bound
-to, replies, linking, attachments, and the checks every device makes.
+Every message, name, attachment and device name is encrypted on the phones with AES-256-GCM, using a key only the
+phones have. Each one is also tied to its conversation, direction and message, so the server can't move it, replay
+it or pass it off as someone else's. The server sees times, directions, sizes and keyed hashes, and that's all. With
+Tor on, it doesn't even see the phones' IP addresses. [inbox/PROTOCOL.md](inbox/PROTOCOL.md) has the full details,
+from the keys to the checks every device makes.
 
-Reactions and quoted replies travel as the texts phones already understand (an iPhone's tapback texts, `> ` quotes),
-since Google Messages gives no other app a way to send them; attachments sent from Paigr go through Messages' reply
-when it takes files and otherwise out of the relay phone as MMS.
+Reactions and quoted replies are sent as the plain texts phones already understand (iPhone-style tapback texts and
+`> ` quotes), because Google Messages doesn't let other apps send real ones. Attachments sent from Paigr go through
+Messages when it accepts files, and otherwise out of the relay phone as MMS.
 
 ## Build
 
 | Part | Where | How |
 | --- | --- | --- |
 | Inbox server and web page | `inbox/` | `node server/paigr-server.js` (Node 22.5+). Tests: `test/run-all.sh` (the `e2e-*` suites need Playwright with Chromium). |
-| Paigr Relay | `paigr-relay-android/` | `./gradlew assembleRelease testReleaseUnitTest` (JDK 17+, Android SDK 35). Unsigned without a `keystore.properties`; see `app/build.gradle`. |
-| Paigr | `paigr-android/` | The same. Its app tests run against the real inbox server in `inbox/`, so Node must be installed. |
+| Paigr Relay | `paigr-relay-android/` | `./gradlew assembleRelease testReleaseUnitTest` (JDK 17+, Android SDK 35). Without a `keystore.properties` the build is unsigned. See `app/build.gradle`. |
+| Paigr | `paigr-android/` | The same. Its tests run against the real inbox server in `inbox/`, so you need Node installed too. |
 
-The vectors in `inbox/test/vectors.json` are what all three implementations of the protocol (the page's `tr2.js`, and
-the two apps' `Crypto`/`Words`) are checked against; `node inbox/test/make-vectors.js` regenerates them.
+There are three implementations of the protocol, the web page's `tr2.js` and the two apps' `Crypto` and `Words`, and
+all three are checked against the vectors in `inbox/test/vectors.json`. `node inbox/test/make-vectors.js` makes new
+ones.
 
 ## Licence
 

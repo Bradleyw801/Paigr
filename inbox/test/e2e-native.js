@@ -32,7 +32,7 @@ function bridge() {
   window.TextsNative = {
     isApp: () => true, version: () => "0.6", key: () => get("key"), setKey: (k) => set("key", k),
     link: () => get("link"), setLink: (j) => { window.__calls.push(["setLink", j]); set("link", j); },
-    recovery: () => get("recovery") || "done", deviceName: () => "Sidephone S1",
+    recovery: () => get("recovery") || "done", deviceName: () => "Pocket Phone S1",
     scanQr: () => window.__calls.push(["scanQr"]), openedConversation: () => {},
     notificationsAllowed: () => true, requestNotifications: () => {}, alertMode: () => "normal", setAlertMode: () => {},
     statusMode: () => "shown", setStatusMode: () => {}, batteryExempt: () => true, requestBattery: () => {},
@@ -58,7 +58,7 @@ function bridge() {
     const relay = { token: TR2.newToken() };
     const code = TR2.newCode();
     const s = await TR2.linkSecrets(code);
-    assert.strictEqual((await call("/v2/link/ask", { body: { lookup: s.lookup, token: relay.token, role: "relay", label: "Unihertz Titan 2 Elite" } }))._status, 200);
+    assert.strictEqual((await call("/v2/link/ask", { body: { lookup: s.lookup, token: relay.token, role: "relay", label: "Example Phone 2" } }))._status, 200);
     await page.click("#scan-btn");
     assert.deepStrictEqual(await page.evaluate(() => window.__calls.map(c => c[0])), ["scanQr"]);
     await page.evaluate((u) => window.textsScanned(u), TR2.linkQr(ORIGIN, code));   // what the scanner read
@@ -79,8 +79,8 @@ function bridge() {
       if (i) await sleep(100);
       mine = ((await call("/v2/devices", { headers: { "x-relay-token": handed[0].token } })).items || []).find(d => d.you);
     }
-    assert.deepStrictEqual(await TR2.openJson(keys.enc, mine.sn, TR2.AAD.device(mine.id)), { name: "Sidephone S1" });
-    assert.ok(!JSON.stringify((await call("/_debug/dump"))["v2-devices"]).includes("Sidephone S1"), "no plain name on the server");
+    assert.deepStrictEqual(await TR2.openJson(keys.enc, mine.sn, TR2.AAD.device(mine.id)), { name: "Pocket Phone S1" });
+    assert.ok(!JSON.stringify((await call("/_debug/dump"))["v2-devices"]).includes("Pocket Phone S1"), "no plain name on the server");
 
     // ---------------------------------------------------------- a picture comes in; saved through the app
     const png = Buffer.from("89504e470d0a1a0a0000000d4948445200000001000000010806000000" + "1f15c4890000000d4944415478da63f8cfc0f01f0005000201" + "e2266e170000000049454e44ae426082", "hex");

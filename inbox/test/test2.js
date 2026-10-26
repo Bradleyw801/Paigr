@@ -140,7 +140,7 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
 
 (async () => {
   // ================================================================ 1. two brand-new phones, one scan
-  const relay = phone("relay", "Titan 2 Elite"), texts = phone("inbox", "Sidephone");
+  const relay = phone("relay", "Home phone"), texts = phone("inbox", "Pocket phone");
   const offer = await asks(relay);
   assert.strictEqual((await waits(relay, offer))._status, 202, "nobody has scanned yet");
   // the code read out loud, typed with dashes and lower case, works the same
@@ -413,7 +413,7 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
   ob = await call(relay, "GET", "/v2/relay/outbox");
   assert.strictEqual(ob.wake, w.at); assert.strictEqual(ob.wakeKind, "refresh");
   const sn = await TR2.sealJson(relay.keys.enc, { note: "Could not read an attachment (image/heic)", history: "paused: no access" }, TR2.AAD.note);
-  const hb = await call(relay, "POST", "/v2/relay/heartbeat", { listening: true, model: "Unihertz Titan 2 Elite", note: "plain words", sn, store: { allowed: true, lastScan: 5, history: { state: "running", done: 10, total: 40, note: "plain" } } });
+  const hb = await call(relay, "POST", "/v2/relay/heartbeat", { listening: true, model: "Example Phone 2", note: "plain words", sn, store: { allowed: true, lastScan: 5, history: { state: "running", done: 10, total: 40, note: "plain" } } });
   assert.strictEqual(hb.wakeKind, "refresh");
   const st = await call(texts, "GET", "/v2/status");
   assert.strictEqual(st.relay.store.history.total, 40);
@@ -476,7 +476,7 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
   let replaced = null;
   r = await scans(texts, offer2.code, { onAsk: c => { replaced = c; } });
   assert.strictEqual(r._status, 200, JSON.stringify(r));
-  assert.strictEqual(replaced.linked, true); assert.strictEqual(replaced.hasRelay, true); assert.strictEqual(replaced.relay.model, "Unihertz Titan 2 Elite");
+  assert.strictEqual(replaced.linked, true); assert.strictEqual(replaced.hasRelay, true); assert.strictEqual(replaced.relay.model, "Example Phone 2");
   await waits(relay2, offer2);
   assert.strictEqual(relay2.tid, texts.tid);
   assert.deepStrictEqual(relay2.keys.raw, texts.keys.raw);
@@ -642,13 +642,13 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
 
   // ================================================================ 8. names: each device seals its own, the server keeps none it could read
   {
-    const sn = await TR2.sealJson(texts.keys.enc, { name: "Sidephone" }, TR2.AAD.device(idOf(texts)));
+    const sn = await TR2.sealJson(texts.keys.enc, { name: "Pocket phone" }, TR2.AAD.device(idOf(texts)));
     assert.strictEqual((await call(texts, "POST", "/v2/devices/name", { sn }))._status, 200);
     const listed = (await call(texts, "GET", "/v2/devices")).items;
     const mine = listed.find(d => d.id === idOf(texts));
     assert.strictEqual(mine.sn, sn, "the list carries the sealed name");
     assert.ok(listed.every(d => d.label === undefined && d.model === undefined), "and no plain names: " + JSON.stringify(listed));
-    assert.deepStrictEqual(await TR2.openJson(texts.keys.enc, mine.sn, TR2.AAD.device(mine.id)), { name: "Sidephone" });
+    assert.deepStrictEqual(await TR2.openJson(texts.keys.enc, mine.sn, TR2.AAD.device(mine.id)), { name: "Pocket phone" });
     assert.strictEqual((await call(texts, "POST", "/v2/devices/name", { sn: "Call 1 800 555 0100" }))._status, 400, "only something sealed");
     assert.strictEqual((await call(texts, "POST", "/v2/devices/name", { sn: "e1." + "A".repeat(500) }))._status, 400, "and short");
     assert.strictEqual(col("v2-devices").get(require("crypto").createHash("sha256").update(texts.token).digest("hex")).sn, sn, "unchanged by a refusal");

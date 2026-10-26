@@ -192,7 +192,9 @@ final class Hedy2 extends Hedy {
      * Replies waiting to go out, opened. Each is a request an inbox device sealed for one conversation, with a nonce and
      * the time it was made; the relay phone checks those before sending anything (Relay.processOutbox). One that doesn't
      * open as a request for the conversation it is filed under (sealed with another key, or moved to another
-     * conversation) is reported failed at once rather than sent somewhere it wasn't meant for.
+     * conversation) is reported failed at once rather than sent somewhere it wasn't meant for. A request for a
+     * conversation this phone doesn't know is refused, unless it starts one: then it names the number, and the
+     * conversation must be the one this phone keys from that number (`to` on the item says so).
      */
     @Override
     JSONObject outbox() throws IOException {
@@ -213,6 +215,11 @@ final class Hedy2 extends Hedy {
             String tag = tagOf(sealedRequest);
             JSONObject request = openRequest(sealedRequest, wire, local);
             String refuse = null;
+            // A conversation an inbox device started with a number: the request names the number, and the conversation
+            // is the one this phone keys from that number alone, so the text can go nowhere else (Conversations.started).
+            String to = request != null ? Conversations.number(request.optString("to", "")) : null;
+            if (to != null && !link.convId(Conversations.startedId(to)).equals(wire)) to = null;
+            if (to != null && local == null) local = Conversations.startedId(to);
             if (request == null) {
                 // Not sealed for the conversation it's filed under. If it's a real request for another of this phone's
                 // conversations (the server filed it elsewhere), it is refused and spent like any other, so it can't be
@@ -239,6 +246,7 @@ final class Hedy2 extends Hedy {
             JSONObject o = Json.obj("id", it.optString("id"), "conv", local != null ? local : "", "text", text, "ts", it.optLong("ts"),
                     "nonce", nonce, "made", made);
             if (media != null) put(o, "media", media);
+            if (to != null) put(o, "to", to);
             // Since when this phone has known the conversation: a request made before then is refused (Prefs.spendRequest).
             if (local != null && requests.knownSince(local) > 0) put(o, "since", requests.knownSince(local));
             // A real request for a conversation this phone doesn't know: refused, and spent like any other (see

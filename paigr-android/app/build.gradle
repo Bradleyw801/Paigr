@@ -19,8 +19,8 @@ android {
         applicationId 'com.textrelay.texts'
         minSdk 29
         targetSdk 35
-        versionCode 12
-        versionName '1.4.1'
+        versionCode 13
+        versionName '1.5'
     }
 
     signingConfigs {
@@ -39,6 +39,10 @@ android {
             minifyEnabled false
             signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
+    }
+
+    buildFeatures {
+        buildConfig true   // the version shown in Settings comes from here
     }
 
     compileOptions {

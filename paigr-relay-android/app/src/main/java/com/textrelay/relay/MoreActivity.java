@@ -243,10 +243,11 @@ public class MoreActivity extends Activity {
 
         boolean sms = relay.canSendSms();
         smsState.title.setText(sms ? "On" : "Off");
-        smsState.sub(sms ? "A plain SMS when Messages can't reply; pictures and files as MMS" : "Replies need Messages' notification; no attachments from Paigr");
+        smsState.sub(sms ? "A plain SMS when Messages can't reply, and to new numbers; pictures and files as MMS"
+                : "Replies need Messages' notification; no new numbers or attachments from Paigr");
         allowSms.view.setVisibility(sms && contacts ? View.GONE : View.VISIBLE);
         allowSms.title.setText(sms ? "Allow contacts" : "Allow SMS fallback");
-        allowSms.sub(sms ? "So it knows more numbers" : "Texts to one person, attachments to anyone");
+        allowSms.sub(sms ? "So it knows more numbers" : "Texts to one person or a new number, attachments to anyone");
         ui.select(status, Prefs.STATUS_HIDDEN.equals(prefs.statusMode()) ? Prefs.STATUS_HIDDEN : Prefs.STATUS_SHOWN);
         server.sub(prefs.link() != null ? host(prefs.server()) + ", linked" : host(prefs.server()));
         ui.endValue(server, "", prefs.link() == null);

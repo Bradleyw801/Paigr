@@ -1071,6 +1071,8 @@ async function heartbeat(ctx, me, body) {
     await doorbell(ctx, tid, "i", "relay", { online: true });
   }
   if (Number.isFinite(body.wakeHandled) && body.wakeHandled > 0) rec.wakeHandled = Math.floor(body.wakeHandled);
+  // Whether the relay phone may send SMS itself: devices then know a reply needn't wait for an open notification.
+  if (typeof body.smsFallback === "boolean") rec.smsFallback = body.smsFallback;
   const store = storeOf(body.store);
   if (store) rec.store = store;
   await ctx.data.put(ST, P(tid, "relay"), rec);
@@ -1172,7 +1174,9 @@ async function feedSince(ctx, tid, cursor) {
 
 /**
  * A reply to send. `e` is how the inbox shows it; `o` is the request the relay phone acts on, sealed for this
- * conversation alone and carrying a one-time nonce, so it can't be pointed at anyone else or sent twice.
+ * conversation alone and carrying a one-time nonce, so it can't be pointed at anyone else or sent twice. A
+ * conversation the inbox doesn't have yet is one the device is starting (PROTOCOL.md, New conversations): it comes
+ * with its sealed name (`ne`), and is made here with it; without that, an unknown conversation is refused.
  */
 async function send(ctx, me, body) {
   const tid = me.tid;
@@ -1183,9 +1187,15 @@ async function send(ctx, me, body) {
   // A conversation the relay phone merged away: the reply goes to the one it went into (the relay phone opens a
   // request sealed for a conversation it merged, see PROTOCOL.md, Merges).
   conv = await homeOf(ctx, tid, conv);
-  const c = await ctx.data.get(CONV, P(tid, conv));
-  if (!c) return json(404, { error: "unknown conversation" });
   const now = Date.now();
+  let c = await ctx.data.get(CONV, P(tid, conv));
+  if (!c) {
+    const ne = sealed(body.ne);
+    if (!ne) return json(404, { error: "unknown conversation" });
+    c = await updateConv(ctx, tid, conv, cur => cur || {
+      conv, ne, lastTs: 0, lastE: "", lastDir: "out", lastMedia: false, canReply: true, unread: 0, started: true, createdAt: now, updatedAt: now
+    });
+  }
   const k = "m:" + pad13(now) + ":o" + rid();
   const value = { k, conv, cv: P(tid, conv), qs: P(tid, "queued"), dir: "out", status: "queued", e, o, ts: now, createdAt: now, src: "texts" };
   if (typeof body.mt === "string" && MT_RE.test(body.mt)) value.mt = body.mt;

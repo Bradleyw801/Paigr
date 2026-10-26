@@ -211,6 +211,16 @@ final class Conversations {
         if (look) lookedUp.put(conv, newest);
         if (t != null) {
             String has = prefs.threadConv(t.id);
+            if (has == null && !known) {
+                // Their first answer to a conversation an inbox device started with their number, before the store
+                // check linked its thread: it joins that conversation rather than starting one of its own.
+                String started = startedWith(keysOf(t.addresses));
+                if (started != null) {
+                    prefs.setNotificationConv(own, started);
+                    link(started, t);
+                    return started;
+                }
+            }
             if (has == null || has.equals(conv)) {
                 if (fits(conv, keysOf(t.addresses))) link(conv, t);
             } else if (!known) {
@@ -228,14 +238,14 @@ final class Conversations {
         if (known) return conv;
 
         // New, and its thread isn't readable (no message access, or encrypted RCS that stays out of the store): match a
-        // conversation the store brought in by the people in it, or by name.
+        // conversation the store brought in, or one an inbox device started with a number, by the people in it, or by name.
         Set<String> keys = new TreeSet<>();
         for (String n : numbersOf(s)) keys.add(Store.key(n));
         keys.remove("");
         String hit = null;
         boolean unique = true;
         for (String c : prefs.conversations()) {
-            if (c.equals(own) || !prefs.fromStore(c)) continue;
+            if (c.equals(own) || !(prefs.fromStore(c) || startedHere(c))) continue;
             Set<String> pa = prefs.participants(c);
             boolean match;
             if (!s.group && !keys.isEmpty()) {
@@ -251,6 +261,79 @@ final class Conversations {
         }
         if (hit == null || !unique) return own;
         prefs.setNotificationConv(own, hit);
+        return hit;
+    }
+
+    // ------------------------------------------------------------------ conversations started from the inbox
+
+    /**
+     * The id this phone gives a conversation an inbox device started with a number: made from the number alone, so the
+     * device and this phone key the same conversation without a word between them (PROTOCOL.md, New conversations).
+     */
+    static String startedId(String number) {
+        return "to:" + number;
+    }
+
+    /** Whether a conversation was started from the inbox with a number (its id says so; the others are hashes). */
+    static boolean startedHere(String conv) {
+        return conv != null && conv.startsWith("to:");
+    }
+
+    /** A number as an inbox device writes one to start a conversation (digits, a leading + allowed), or null. */
+    static String number(String raw) {
+        if (raw == null) return null;
+        String n = raw.trim();
+        return n.matches("\\+?[0-9]{3,20}") ? n : null;
+    }
+
+    /**
+     * A conversation an inbox device started with a number, the first time a text for it reaches this phone. When this
+     * phone already has a one-to-one conversation with that number, the text goes through that one and the started
+     * conversation folds into it on the inbox (its replies would otherwise land in two places); otherwise the started
+     * conversation is made here, named for the number (the contact's name when Contacts is allowed), with the number
+     * SMS fallback sends to. Returns the conversation to send through.
+     */
+    synchronized String started(String conv, String number) {
+        if (prefs.knows(conv)) return conv;
+        String existing = withNumber(Store.key(number), conv);
+        if (existing != null) {
+            prefs.addMerge(conv, existing);
+            FoldListener l = onFold;
+            if (l != null) l.folded(conv, existing);
+            return existing;
+        }
+        prefs.setName(conv, nameFor(number));
+        prefs.setNumber(conv, number);
+        prefs.setGroup(conv, false);
+        prefs.setParticipants(conv, keysOf(java.util.Collections.singletonList(number)));
+        return conv;
+    }
+
+    /** The one one-to-one conversation with this person (by number), other than `except`; null when none, or several. */
+    private String withNumber(String key, String except) {
+        if (key.isEmpty()) return null;
+        String hit = null;
+        for (String c : prefs.conversations()) {
+            if (c.equals(except) || Boolean.TRUE.equals(prefs.group(c))) continue;
+            Set<String> pa = prefs.participants(c);
+            String number = prefs.number(c);
+            boolean match = pa.size() == 1 ? pa.contains(key) : pa.isEmpty() && number != null && Store.key(number).equals(key);
+            if (!match) continue;
+            if (hit != null) return null;
+            hit = c;
+        }
+        return hit;
+    }
+
+    /** The one conversation started from the inbox with exactly this person, or null. */
+    private String startedWith(List<String> keys) {
+        if (keys.size() != 1) return null;
+        String hit = null;
+        for (String c : prefs.conversations()) {
+            if (!startedHere(c) || !prefs.participants(c).equals(new TreeSet<>(keys))) continue;
+            if (hit != null) return null;
+            hit = c;
+        }
         return hit;
     }
 

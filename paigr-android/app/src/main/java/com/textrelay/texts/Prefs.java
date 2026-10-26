@@ -303,6 +303,38 @@ final class Prefs {
         sp.edit().putString("emoji_recent", String.join("\t", list)).apply();
     }
 
+    /** The conversations started from this phone with a number, by conversation: the number, and the name it was given here. */
+    java.util.Map<String, String[]> startedHere() {
+        java.util.Map<String, String[]> out = new java.util.LinkedHashMap<>();
+        try {
+            org.json.JSONObject o = new org.json.JSONObject(sp.getString("started2", "{}"));
+            for (java.util.Iterator<String> it = o.keys(); it.hasNext(); ) {
+                String conv = it.next();
+                org.json.JSONObject e = o.optJSONObject(conv);
+                if (e != null && !e.optString("n", "").isEmpty()) out.put(conv, new String[] { e.optString("n"), e.optString("name", "") });
+            }
+        } catch (org.json.JSONException ignored) {
+            // nothing kept
+        }
+        return out;
+    }
+
+    void rememberStarted(String conv, String number, String name) {
+        java.util.Map<String, String[]> all = startedHere();
+        all.put(conv, new String[] { number, name == null ? "" : name });
+        // Only the newest hundred: a conversation the relay phone has taken on needs no reminder of its number.
+        while (all.size() > 100) all.remove(all.keySet().iterator().next());
+        org.json.JSONObject o = new org.json.JSONObject();
+        try {
+            for (java.util.Map.Entry<String, String[]> e : all.entrySet()) {
+                o.put(e.getKey(), new org.json.JSONObject().put("n", e.getValue()[0]).put("name", e.getValue()[1]));
+            }
+        } catch (org.json.JSONException ignored) {
+            // plain strings
+        }
+        sp.edit().putString("started2", o.toString()).apply();
+    }
+
     /** "Connect through Tor" (see Tor). Always on while this phone's inbox is on a .onion server. */
     boolean tor() {
         return sp.getBoolean(Tor.PREF, false) || onionServer();

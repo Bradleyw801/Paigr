@@ -30,7 +30,7 @@ import java.util.List;
  */
 public class MainActivity extends Activity implements Inbox.Listener {
     static final String EXTRA_CONV = "conv";
-    static final String VERSION = "1.2";
+    static final String VERSION = BuildConfig.VERSION_NAME;
     /** "pending" while this phone asks the inbox whether it was linked before (a reinstall); "done" otherwise. */
     static volatile String recovery = "done";
     /** Tests set this in place of the phone's Android ID. */
@@ -38,6 +38,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
     private static final int REQ_NOTIFICATIONS = 1;
     static final int REQ_SCAN = 2;
     static final int REQ_ATTACH = 3;
+    static final int REQ_CONTACT = 4;
 
     Ui ui;
     Inbox inbox;
@@ -48,6 +49,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
     ConnectScreen connect;
     InboxScreen list;
     ThreadScreen thread;
+    ComposeScreen compose;
     DetailsScreen details;
     SettingsScreen settings;
     Viewer viewer;
@@ -106,7 +108,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
 
     private List<Screen> all() {
         List<Screen> out = new ArrayList<>();
-        for (Screen s : new Screen[] { connect, list, thread, details, settings, viewer }) if (s != null) out.add(s);
+        for (Screen s : new Screen[] { connect, list, thread, compose, details, settings, viewer }) if (s != null) out.add(s);
         return out;
     }
 
@@ -277,6 +279,35 @@ public class MainActivity extends Activity implements Inbox.Listener {
         push(details);
     }
 
+    /** New message: a number to text, over the list. */
+    void openCompose() {
+        if (compose == null) compose = new ComposeScreen(this);
+        compose.open();
+        push(compose);
+    }
+
+    /** The compose screen settled on a conversation: it goes, and the conversation opens in its place. */
+    void startedConversation(String conv) {
+        if (top() == compose) {
+            Screen s = stack.remove(stack.size() - 1);
+            s.hidden();
+            s.root.setVisibility(View.GONE);
+            Screen under = top();
+            if (under != null) under.root.setVisibility(View.VISIBLE);
+        }
+        openConversation(conv);
+    }
+
+    /** The phone's own contact picker, for the number to text (the picked row comes back readable without Contacts access). */
+    void pickContact() {
+        Intent pick = new Intent(Intent.ACTION_PICK, android.provider.ContactsContract.CommonDataKinds.Phone.CONTENT_URI);
+        try {
+            startActivityForResult(pick, REQ_CONTACT);
+        } catch (android.content.ActivityNotFoundException e) {
+            say("This phone has no contacts app to pick from.", 2500);
+        }
+    }
+
     void openSettings() {
         if (settings == null) settings = new SettingsScreen(this);
         push(settings);
@@ -304,7 +335,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
         if (stack.size() > 1) {
             if (s == thread) inbox.closeThread();
             if (s == details) inbox.view = "thread";
-            if (s == settings) inbox.view = "inbox";
+            if (s == settings || s == compose) inbox.view = "inbox";
             pop();
             return;
         }
@@ -344,6 +375,13 @@ public class MainActivity extends Activity implements Inbox.Listener {
         inbox.closeThread();
     }
 
+    @Override
+    public void conversationMoved(String into) {
+        Model.Conv c = inbox.convs.get(into);
+        openConversation(into);
+        if (c != null) say("That number is " + c.name + ": continued here.", 4000);
+    }
+
     // ------------------------------------------------------------------ linking
 
     void scan(String what) {
@@ -370,6 +408,11 @@ public class MainActivity extends Activity implements Inbox.Listener {
         if (requestCode == REQ_ATTACH) {
             android.net.Uri picked = resultCode == RESULT_OK && data != null ? data.getData() : null;
             if (picked != null && thread != null) thread.attach(picked);
+            return;
+        }
+        if (requestCode == REQ_CONTACT) {
+            android.net.Uri picked = resultCode == RESULT_OK && data != null ? data.getData() : null;
+            if (picked != null && compose != null) compose.picked(picked);
             return;
         }
         if (requestCode != REQ_SCAN || inbox == null) return;

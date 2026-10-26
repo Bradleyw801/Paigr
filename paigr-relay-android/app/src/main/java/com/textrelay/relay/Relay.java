@@ -838,9 +838,14 @@ final class Relay {
                         report = NotSent.report(id, refused);
                     } else {
                         prefs.setOutboxReport(id, stopped);
+                        String conv = item.optString("conv");
+                        // A conversation an inbox device started with a number: made here now, or the one this phone
+                        // already has with that number (Conversations.started).
+                        String to = item.optString("to", "");
+                        if (!to.isEmpty()) conv = conversations.started(conv, to);
                         // A conversation this phone folded into another (its own merge, maybe not on the inbox yet)
                         // is answered through the one it went into.
-                        SendResult result = sendReply(prefs.foldedInto(item.optString("conv")), item.optString("text"), item.optJSONObject("media"), hedy);
+                        SendResult result = sendReply(prefs.foldedInto(conv), item.optString("text"), item.optJSONObject("media"), hedy);
                         report = Json.obj("id", id, "status", result.sent ? "sent" : "failed", "canReply", result.canReply, "via", result.via);
                         if (!result.sent) {
                             put(report, "code", result.code);
@@ -962,11 +967,12 @@ final class Relay {
     }
 
     /**
-     * No open notification to reply through (reboot, dismissed, never had one): send a plain SMS from this device.
-     * Only for one-to-one conversations whose number is known for certain; group chats stay RCS-only.
+     * No open notification to reply through (reboot, dismissed, never had one, or a conversation started from the
+     * inbox): send a plain SMS from this device. Only for one-to-one conversations whose number is known for certain;
+     * group chats stay RCS-only.
      */
     SendResult smsFallback(String conv, String text) {
-        if (!canSendSms()) return new SendResult(false, NotSent.NO_FALLBACK, false, "rcs");
+        if (!canSendSms()) return new SendResult(false, Conversations.startedHere(conv) ? NotSent.START_SMS : NotSent.NO_FALLBACK, false, "rcs");
         if (Boolean.TRUE.equals(prefs.group(conv))) return new SendResult(false, NotSent.GROUP, false, "rcs");
         String number = numberFor(conv);
         if (number == null) return new SendResult(false, NotSent.NO_NUMBER, false, "rcs");

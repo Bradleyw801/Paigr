@@ -47,6 +47,9 @@ final class Inbox {
 
         /** The open conversation was folded into another one: back to the list. */
         void conversationGone();
+
+        /** The open conversation was folded into `into` (a number this phone started a conversation with was already one): show that. */
+        void conversationMoved(String into);
     }
 
     static final int LIST = 1, THREAD = 2, RELAY = 4;
@@ -100,6 +103,10 @@ final class Inbox {
     /** In-thread search is open: the thread isn't redrawn under it. */
     boolean finding;
     final Set<String> pendingOut = new HashSet<>();
+    /** Conversations started here with a number, by conversation: the number (the relay phone keys them from it) and the name given here. */
+    private final Map<String, String[]> started = new LinkedHashMap<>();
+    /** Conversations started here that the inbox doesn't list yet: nothing has been sent in them so far. */
+    private final Map<String, Model.Conv> unsent = new LinkedHashMap<>();
     private boolean syncing;
     private boolean visible;
     private Doorbell doorbell;
@@ -110,6 +117,7 @@ final class Inbox {
         this.app = app;
         this.prefs = new Prefs(app);
         this.media = new Media(this);
+        started.putAll(prefs.startedHere());
     }
 
     private static ThreadFactory daemon(String name) {
@@ -217,6 +225,7 @@ final class Inbox {
         cursors.clear();
         complete.clear();
         pendingOut.clear();
+        unsent.clear();
         feed = null;
         epoch = null;
         relay = null;
@@ -396,6 +405,9 @@ final class Inbox {
     private void applyInbox(Loaded d) {
         convs.clear();
         for (Model.Conv c : d.items) convs.put(c.conv, c);
+        // A conversation started here stays listed until the inbox has it (its first text puts it there).
+        unsent.keySet().removeIf(convs::containsKey);
+        for (Map.Entry<String, Model.Conv> e : unsent.entrySet()) convs.put(e.getKey(), e.getValue());
         if (feed == null) feed = d.feed;
         if (d.epoch != null) epoch = d.epoch;
         relay = d.relay;
@@ -548,10 +560,76 @@ final class Inbox {
     }
 
     void closeThread() {
+        String was = current;
         current = null;
         view = "inbox";
         finding = false;
         SyncService.setOpenConversation(app, null);
+        // A conversation started here and left without a word: nothing to list.
+        if (was != null && unsent.containsKey(was) && thread(was).isEmpty()) {
+            unsent.remove(was);
+            convs.remove(was);
+            msgs.remove(was);
+            complete.remove(was);
+            tell(LIST, false);
+        }
+    }
+
+    // ------------------------------------------------------------------ starting a conversation
+
+    /**
+     * A conversation with a number typed here. One this phone already lists under that number is opened instead. Any
+     * other is keyed from the number the way the relay phone keys it (so the two agree on it without a word between
+     * them), named for the number until the relay phone names it, and listed here until the inbox has it, which its
+     * first text sees to; the relay phone sends that as SMS, and folds the conversation into one it already has with
+     * that number (PROTOCOL.md, New conversations). Null when what was typed isn't a number.
+     */
+    String startConversation(String typed, String name) {
+        String number = Numbers.canonical(typed);
+        if (number == null || link == null) return null;
+        String key = Numbers.key(number);
+        for (Model.Conv c : convs.values()) if (!c.group && Numbers.isNumber(c.name) && Numbers.key(c.name).equals(key)) return c.conv;
+        for (Map.Entry<String, String[]> e : started.entrySet()) {
+            if (!Numbers.key(e.getValue()[0]).equals(key)) continue;
+            if (convs.containsKey(e.getKey())) return e.getKey();
+            // Started here before, and folded by the relay phone into the conversation it had with that number.
+            for (Model.Conv c : convs.values()) if (c.aliases != null && c.aliases.contains(e.getKey())) return c.conv;
+            // Gone from the list (left without a word): the same conversation again, keyed from the number as it was
+            // written then, so one person doesn't become two conversations by how their number was typed.
+            number = e.getValue()[0];
+            if (name == null || name.trim().isEmpty()) name = e.getValue()[1];
+            break;
+        }
+        String conv = Crypto.hex(link.mac("conv:to:" + number)).substring(0, 32);
+        String called = name == null || name.trim().isEmpty() ? Numbers.pretty(number) : name.trim();
+        started.put(conv, new String[] { number, called });
+        prefs.rememberStarted(conv, number, called);
+        if (!convs.containsKey(conv)) {
+            Model.Conv c = new Model.Conv();
+            c.conv = conv;
+            c.name = called;
+            c.lastTs = System.currentTimeMillis();
+            c.lastDir = "out";
+            c.aliases = java.util.Collections.singletonList(conv);
+            c.aliasKey = conv;
+            convs.put(conv, c);
+            unsent.put(conv, c);
+            if (!msgs.containsKey(conv)) msgs.put(conv, new ArrayList<>());
+            complete.add(conv);
+            tell(LIST, false);
+        }
+        return conv;
+    }
+
+    /** The number a conversation was started with here, or null for one the relay phone brought. */
+    String startedWith(String conv) {
+        String[] s = conv != null ? started.get(conv) : null;
+        return s != null ? s[0] : null;
+    }
+
+    /** Whether the relay phone says it can send SMS: a conversation needs no open reply handle then (one-to-one). */
+    boolean smsFallbackOn() {
+        return relay != null && Boolean.TRUE.equals(relay.smsFallback);
     }
 
     /**
@@ -771,10 +849,19 @@ final class Inbox {
         arr.add(temp);
         tell(THREAD, true);
         Link at = link;
+        String[] from = started.get(conv);
+        String to = from != null ? from[0] : null;
+        String called = from != null && !from[1].isEmpty() ? from[1] : to != null ? Numbers.pretty(to) : "";
         run(() -> {
             JSONObject shown = new JSONObject().put("text", t).put("ts", now);
             JSONObject request = new JSONObject().put("text", t).put("n", Crypto.b64u(Crypto.random(16))).put("ts", now);
             JSONObject body = new JSONObject().put("conv", conv);
+            if (to != null) {
+                // A conversation started here: the request names the number (inside the seal, so only the relay phone
+                // reads it), and the inbox gets the conversation's name in case it doesn't have the conversation yet.
+                request.put("to", to);
+                body.put("ne", at.seal(new JSONObject().put("name", called).put("group", false), Crypto.aadName(conv)));
+            }
             String mime = "";
             if (att != null) {
                 byte[] plain = media.readLocal(att.uri, ATTACH_MAX);
@@ -821,13 +908,17 @@ final class Inbox {
                 }
             }
             if (!id.isEmpty()) pendingOut.add(id);
+            unsent.remove(conv);   // the inbox has the conversation now
             Model.Conv c = convs.get(conv);
             if (c != null) {
                 c.lastTs = temp.ts;
                 c.lastText = !t.isEmpty() ? t : att != null ? Opener.mediaKind(att.mime) : "";
                 c.lastDir = "out";
             }
-            if (Boolean.FALSE.equals(r.opt("canReply")) && conv.equals(current)) say("Queued. It goes out after their next text reaches the relay phone.", 4000);
+            boolean group = c != null && c.group;
+            if (Boolean.FALSE.equals(r.opt("canReply")) && conv.equals(current) && (group || !smsFallbackOn())) {
+                say("Queued. It goes out after their next text reaches the relay phone.", 4000);
+            }
             tell(THREAD | LIST, conv.equals(current));
         }, e -> {
             temp.status = "failed";
@@ -914,6 +1005,7 @@ final class Inbox {
         if (c == null || c.conv.isEmpty()) return false;
         Model.Conv next = c.copy();
         if (c.conv.equals(current) && "thread".equals(view)) next.unread = 0;
+        unsent.remove(c.conv);
         Model.Conv cur = convs.get(c.conv);
         if (cur != null && cur.sameSummary(next)) return false;
         convs.put(c.conv, next);
@@ -1053,7 +1145,13 @@ final class Inbox {
         loadInbox(() -> {
             if (was != null && was.equals(current) && ("thread".equals(shown) || "details".equals(shown))) {
                 if (convs.containsKey(was)) openThread(was);
-                else if (listener != null) listener.conversationGone();
+                else if (listener != null) {
+                    // Folded into another conversation (its summary vouches for the old id): that one, in its place.
+                    String into = null;
+                    for (Model.Conv c : convs.values()) if (c.aliases != null && c.aliases.contains(was)) into = c.conv;
+                    if (into != null) listener.conversationMoved(into);
+                    else listener.conversationGone();
+                }
             }
             if (then != null) then.run();
         }, e -> {

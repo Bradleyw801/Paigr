@@ -628,8 +628,7 @@ final class Ui {
         String n = name == null ? "" : name.trim();
         if (n.isEmpty()) return "#";
         StringBuilder out = new StringBuilder();
-        boolean digits = n.replaceAll("[^0-9+]", "").length() >= Math.max(3, n.replaceAll("\\s", "").length() - 1);
-        if (digits) {
+        if (Numbers.isNumber(n)) {   // a number for a name: its first two digits
             String d = n.replaceAll("[^0-9]", "");
             return d.length() >= 2 ? d.substring(0, 2) : (d.isEmpty() ? "#" : d);
         }

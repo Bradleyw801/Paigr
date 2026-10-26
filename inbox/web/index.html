@@ -46,6 +46,7 @@
     <symbol id="i-history" viewBox="0 0 24 24"><path d="M4,12 a8,8 0 1 0 2.4,-5.7 L4,8.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4,4 v4.5 h4.5 M12,8 v4.5 l3,2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5,12.5 L9.5,17 L19,7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-image" viewBox="0 0 24 24"><path d="M6.1,5 h11.8 a2.6,2.6 0 0 1 2.6,2.6 v8.8 a2.6,2.6 0 0 1 -2.6,2.6 h-11.8 a2.6,2.6 0 0 1 -2.6,-2.6 v-8.8 a2.6,2.6 0 0 1 2.6,-2.6 z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.4,10 a1.6,1.6 0 1,0 3.2,0 a1.6,1.6 0 1,0 -3.2,0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.5,17.5 l5,-5 4,4 2.5,-2.5 4,4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-compose" viewBox="0 0 24 24"><path d="M16.5,3.5 L20.5,7.5 L8.5,19.5 L4,20 L4.5,15.5 Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5,6.5 L17.5,10.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5,7 h14 M10,4 h4 M7,7 l0.8,12.5 a1.6,1.6 0 0 0 1.6,1.5 h5.2 a1.6,1.6 0 0 0 1.6,-1.5 L17,7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </defs>
 </svg>
@@ -92,6 +93,7 @@
       <div class="titlebar">
         <h1 class="title">Paigr</h1>
         <div id="relay-strip" class="strip"></div>
+        <button id="compose-btn" class="icon-btn" type="button" aria-label="New message" title="New message"><svg><use href="#i-compose"/></svg></button>
         <button id="search-btn" class="icon-btn" type="button" aria-label="Search" title="Search"><svg><use href="#i-search"/></svg></button>
         <button id="settings-btn" class="icon-btn" type="button" aria-label="Settings" title="Settings"><svg><use href="#i-gear"/></svg></button>
       </div>
@@ -152,6 +154,23 @@
       <button id="send-btn" type="submit" class="send" aria-label="Send"><svg><use href="#i-send"/></svg></button>
     </form>
     <div id="emoji-panel" class="emoji-panel" hidden></div>
+  </section>
+
+  <!-- New message: the number to text; the conversation opens, and the message is written there -->
+  <section id="view-compose" class="view compose" hidden>
+    <header class="appbar">
+      <button id="compose-back" class="icon-btn" type="button" aria-label="Back"><svg><use href="#i-back"/></svg></button>
+      <span class="appbar-name">New message</span>
+      <span class="appbar-spacer"></span>
+    </header>
+    <form id="compose-form" class="compose-body" autocomplete="off">
+      <label class="to-row">
+        <span class="to-label">To</span>
+        <input id="to-input" type="tel" placeholder="Phone number" aria-label="Phone number" autocomplete="off" enterkeyhint="next">
+      </label>
+      <p class="compose-hint">Your relay phone sends the first text as SMS. A number you already text with opens its conversation.</p>
+      <button id="compose-next" class="primary" type="submit"><svg aria-hidden="true"><use href="#i-chevron"/></svg>Next</button>
+    </form>
   </section>
 
   <!-- Details: photos, files and links in one conversation -->

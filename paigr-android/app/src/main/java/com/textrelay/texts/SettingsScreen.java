@@ -40,6 +40,8 @@ final class SettingsScreen extends Screen {
     private final Ui.Segmented status;
     private final TextView statusSub;
     private final Ui.Row allowRow;
+    private final Ui.Row channelRow;
+    private final Ui.Row testRow;
     private final Ui.Row batteryRow;
     private final LinearLayout devices;
     private final TextView devicesNote;
@@ -146,6 +148,16 @@ final class SettingsScreen extends Screen {
         notes.addView(statusBox);
         allowRow = ui.row(R.drawable.ic_alert, ui.warn, "Allow notifications", v -> openNotificationSettings());
         notes.addView(allowRow.view);
+        // Android's own setting for the channel can quietly take the pop-up or the sound away, or block it outright.
+        channelRow = ui.row(R.drawable.ic_alert, ui.warn, "New texts are muted by Android",
+                v -> openChannelSettings(Prefs.ALERT_QUIET.equals(a.prefs.alertMode()) ? Notifier.CHANNEL_QUIET : Notifier.CHANNEL));
+        notes.addView(channelRow.view);
+        testRow = ui.row(R.drawable.ic_sms, Ui.BRAND.hi, "Test notification", v -> {
+            SyncService.notifier(a).test();
+            a.say("Sent. It should be in the shade now, like a text.", 3000);
+        });
+        testRow.sub("A sample, the way a new text arrives");
+        notes.addView(testRow.view);
         batteryRow = ui.row(R.drawable.ic_charge, ui.warn, "Allow background use", v -> askBattery());
         batteryRow.sub("So texts keep arriving when the phone is idle");
         notes.addView(batteryRow.view);
@@ -340,8 +352,20 @@ final class SettingsScreen extends Screen {
         ui.select(status, hidden ? "hidden" : "shown");
         statusSub.setText(hidden ? "Turned off in Android's settings. Paigr still listens." : "Android shows it while Paigr listens for texts.");
         statusBox.setVisibility(Prefs.ALERT_OFF.equals(mode) ? View.GONE : View.VISIBLE);
-        boolean allowed = a.getSystemService(NotificationManager.class).areNotificationsEnabled();
+        NotificationManager nm = a.getSystemService(NotificationManager.class);
+        boolean allowed = nm.areNotificationsEnabled();
         allowRow.view.setVisibility(allowed ? View.GONE : View.VISIBLE);
+        // The channel as Android has it now: the person may have changed it in Android's settings since.
+        String wanted = Prefs.ALERT_QUIET.equals(mode) ? Notifier.CHANNEL_QUIET : Notifier.CHANNEL;
+        android.app.NotificationChannel ch = nm.getNotificationChannel(wanted);
+        int importance = ch != null ? ch.getImportance() : NotificationManager.IMPORTANCE_UNSPECIFIED;
+        boolean blocked = ch != null && importance == NotificationManager.IMPORTANCE_NONE;
+        boolean dimmed = ch != null && !Prefs.ALERT_QUIET.equals(mode) && importance < NotificationManager.IMPORTANCE_HIGH && !blocked;
+        channelRow.view.setVisibility(allowed && !Prefs.ALERT_OFF.equals(mode) && (blocked || dimmed) ? View.VISIBLE : View.GONE);
+        channelRow.title.setText(blocked ? "New texts are blocked by Android" : "New texts don't pop up");
+        channelRow.sub(blocked ? "Android's setting for Paigr's \"New texts\" is off. Tap to turn it on."
+                : "Android's setting for \"New texts\" has no pop-up" + (importance < NotificationManager.IMPORTANCE_DEFAULT ? " or sound" : "") + ". Tap to change it.");
+        testRow.view.setVisibility(allowed && !Prefs.ALERT_OFF.equals(mode) ? View.VISIBLE : View.GONE);
         boolean exempt = a.getSystemService(PowerManager.class).isIgnoringBatteryOptimizations(a.getPackageName());
         batteryRow.view.setVisibility(exempt || Prefs.ALERT_OFF.equals(mode) ? View.GONE : View.VISIBLE);
     }
@@ -406,11 +430,17 @@ final class SettingsScreen extends Screen {
 
     private void openStatusSettings() {
         SyncService.createChannels(a);
-        Intent channel = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+        openChannelSettings(SyncService.CHANNEL);
+    }
+
+    /** Android's own settings for one of Paigr's notification channels (the app's page when there is no such screen). */
+    private void openChannelSettings(String channel) {
+        SyncService.notifier(a);   // the channels exist
+        Intent settings = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, a.getPackageName())
-                .putExtra(Settings.EXTRA_CHANNEL_ID, SyncService.CHANNEL);
+                .putExtra(Settings.EXTRA_CHANNEL_ID, channel);
         try {
-            a.startActivity(channel);
+            a.startActivity(settings);
         } catch (ActivityNotFoundException e) {
             openNotificationSettings();
         }

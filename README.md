@@ -6,7 +6,8 @@ carry a phone without Google services and still get every text, RCS included, fr
 It's two apps and a small server. Paigr Relay runs on the phone with your SIM and Google Messages. It picks up every
 text that comes in (SMS, MMS and RCS, groups and pictures too), encrypts it and sends it to your inbox on the server.
 Paigr runs on the phone you carry, and the same inbox also works in a browser. Your replies go back to the relay
-phone and out through Messages, or as SMS or MMS from the phone itself.
+phone and out through Messages, or as SMS or MMS from the phone itself; a new conversation with any number starts
+the same way, as SMS from the relay phone.
 
 Everything is encrypted on the phones before it leaves them, so the server only holds what it can't read. You can
 use my server or run your own.

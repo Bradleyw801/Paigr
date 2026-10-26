@@ -194,6 +194,84 @@ async function check(name, fn) {
       await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "failed", code: "too_big" } });
       await page.waitForSelector('#msg-list:has-text("Too big to send as MMS from the relay phone.")', { timeout: 10000 });
     });
+
+    // ------------------------------------------------ a new conversation, from a number
+    await check("i. New message: a number typed here opens a conversation the relay phone keys from it; the first text names the number inside its request", async () => {
+      await page.click("#back-btn");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+      await page.click("#compose-btn");
+      await page.waitForSelector("#view-compose:not([hidden])");
+      await page.fill("#to-input", "(801) 555-0177");
+      await page.click("#compose-next");
+      await page.waitForSelector("#view-thread:not([hidden])");
+      const started = await TR2.convId(keys, "to:8015550177");
+      assert.strictEqual(await page.evaluate(() => document.getElementById("thread-name").textContent), "(801) 555-0177");
+      const notice = await page.textContent("#thread-notice");
+      assert.ok(notice.includes("Your first text to (801) 555-0177 goes out as SMS"), notice);
+      await page.fill("#msg-input", "Hi, is the bike still for sale?");
+      await page.click("#send-btn");
+      const it = await outbox(seen);
+      assert.strictEqual(it.conv, started);
+      const request = await TR2.openJson(keys.enc, it.o, TR2.AAD.out(started));
+      assert.strictEqual(request.text, "Hi, is the bike still for sale?");
+      assert.strictEqual(request.to, "8015550177");
+      // the inbox lists it now, under the name this device sealed
+      const listed = (await call("/v2/inbox", { headers: { "x-relay-token": texts.token } })).items.find(c => c.conv === started);
+      assert.ok(listed && listed.started, "listed");
+      assert.strictEqual((await TR2.openJson(keys.enc, listed.ne, TR2.AAD.name(started))).name, "(801) 555-0177");
+      await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "sent", via: "sms", canReply: false } });
+      await page.waitForSelector('#msg-list:has-text("Sent as SMS")', { timeout: 10000 });
+      assert.ok(await page.isHidden("#thread-notice") || !(await page.textContent("#thread-notice")).includes("first text"));
+      // back on the list: there it is; the same number typed another way is the same conversation
+      await page.click("#back-btn");
+      await page.waitForSelector('#conv-list li:has-text("(801) 555-0177")');
+      await page.click("#compose-btn");
+      await page.fill("#to-input", "+1 801 555 0177");
+      await page.click("#compose-next");
+      await page.waitForSelector('#view-thread:not([hidden]) #msg-list:has-text("Hi, is the bike still for sale?")');
+      // and a conversation left without a word isn't listed
+      await page.click("#back-btn");
+      await page.click("#compose-btn");
+      await page.fill("#to-input", "801-555-0199");
+      await page.click("#compose-next");
+      await page.waitForSelector("#view-thread:not([hidden])");
+      await page.click("#back-btn");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+      assert.ok(!(await page.textContent("#conv-list")).includes("(801) 555-0199"));
+      // what isn't a number stays on the compose screen
+      await page.click("#compose-btn");
+      await page.fill("#to-input", "call me maybe");
+      await page.click("#compose-next");
+      await sleep(300);
+      assert.ok(await page.isVisible("#view-compose"));
+      await page.keyboard.press("Escape");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+    });
+    await check("j. the relay phone folds a started conversation into the one it had with that number: the page follows", async () => {
+      await page.click("#compose-btn");
+      await page.fill("#to-input", "801 555 0123");
+      await page.click("#compose-next");
+      await page.waitForSelector("#view-thread:not([hidden])");
+      const started = await TR2.convId(keys, "to:8015550123");
+      await page.fill("#msg-input", "Is this Maya?");
+      await page.click("#send-btn");
+      const it = await outbox(seen);
+      assert.strictEqual(it.conv, started);
+      await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "sent", via: "rcs", canReply: true } });
+      const merged = await call("/v2/relay/merge", { headers: R, body: { from: started, into: conv, mr: await TR2.sealJson(keys.enc, { from: started, into: conv }, TR2.AAD.merge(conv)) } });
+      assert.strictEqual(merged._status, 200, JSON.stringify(merged));
+      await page.waitForSelector('#view-thread:not([hidden]) #msg-list:has-text("Is this Maya?")', { timeout: 15000 });
+      await page.waitForFunction(() => document.getElementById("thread-name").textContent === "Maya Chen", null, { timeout: 15000 });
+      await page.waitForSelector('#toast:has-text("That number is Maya Chen: continued here.")', { timeout: 10000 });
+      await page.click("#back-btn");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+      assert.ok(!(await page.textContent("#conv-list")).includes("(801) 555-0123"));
+      // texting the number again goes to Maya's conversation now
+      await page.click("#compose-btn");
+      await page.fill("#to-input", "(801) 555-0123");
+      await page.click("#compose-next");
+      await page.waitForFunction(() => document.getElementById("thread-name").textContent === "Maya Chen", null, { timeout: 10000 });
+    });
     if (process.env.SHOT) {   // a look at it: SHOT=/path/to.png node test/e2e-features.js
       await page.setViewportSize({ width: 400, height: 760 });
       await page.click('#msg-list li:has-text("Doors open at 7") .bubble', { button: "right" });

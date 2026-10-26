@@ -46,6 +46,8 @@ final class InboxScreen extends Screen {
     private final FrameLayout more;
     private final LinearLayout power;
     final ListView list;
+    /** New message, over the list's bottom corner. */
+    final FrameLayout compose;
     private final Pull pull;
     private final LinearLayout empty;
     private final TextView emptyTitle;
@@ -220,6 +222,18 @@ final class InboxScreen extends Screen {
         empty.addView(emptySub);
         empty.setVisibility(View.GONE);
         body.addView(empty, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        compose = new FrameLayout(a);
+        compose.setBackground(ui.pressable(ui.gradient(Ui.BRAND.base, Ui.BRAND.partner, GradientDrawable.Orientation.TL_BR, 27), 27));
+        compose.setElevation(ui.dp(6));
+        compose.setFocusable(true);
+        compose.setClickable(true);
+        compose.setContentDescription("New message");
+        compose.setOnClickListener(v -> a.openCompose());
+        compose.addView(ui.icon(R.drawable.ic_compose, Color.WHITE, 24), new FrameLayout.LayoutParams(ui.dp(24), ui.dp(24), Gravity.CENTER));
+        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(ui.dp(54), ui.dp(54), Gravity.BOTTOM | Gravity.END);
+        flp.setMargins(0, 0, ui.dp(16), ui.dp(16));
+        body.addView(compose, flp);
         col.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         root = col;
         render();
@@ -239,6 +253,10 @@ final class InboxScreen extends Screen {
         int n = unreadConversations();
         PopupWindow pop = popup();
         LinearLayout menu = (LinearLayout) pop.getContentView();
+        menu.addView(action(R.drawable.ic_compose, "New message", true, () -> {
+            pop.dismiss();
+            a.openCompose();
+        }));
         menu.addView(action(R.drawable.ic_done_all, n == 0 ? "Nothing unread" : "Mark all as read", n > 0, () -> {
             pop.dismiss();
             inbox.markAllRead();
@@ -312,7 +330,10 @@ final class InboxScreen extends Screen {
     @Override
     void insets(int top, int bottom, boolean keyboard) {
         header.setPadding(0, top, 0, 0);
-        list.setPadding(0, ui.dp(2), 0, bottom + ui.dp(12));
+        list.setPadding(0, ui.dp(2), 0, bottom + ui.dp(80));   // room to scroll the last row out from under the button
+        FrameLayout.LayoutParams flp = (FrameLayout.LayoutParams) compose.getLayoutParams();
+        flp.setMargins(0, 0, ui.dp(16), bottom + ui.dp(16));
+        compose.setLayoutParams(flp);
     }
 
     @Override

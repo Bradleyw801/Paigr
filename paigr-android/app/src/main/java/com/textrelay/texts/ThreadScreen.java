@@ -533,6 +533,7 @@ final class ThreadScreen extends Screen {
             case "too_big": return "Too big to send as MMS from the relay phone.";
             case "mms_failed": return "MMS failed on the relay phone.";
             case "attach_fetch": return "The relay phone couldn't fetch the attachment.";
+            case "start_sms": return "Texting a new number needs SMS fallback on in Paigr Relay.";
             default: return "The relay phone couldn't send it.";
         }
     }
@@ -687,8 +688,16 @@ final class ThreadScreen extends Screen {
     private void render(boolean end) {
         if (conv == null) return;
         Model.Conv cv = inbox.convs.get(conv);
-        boolean canReply = cv == null || cv.canReply;
-        notice.setVisibility(canReply ? View.GONE : View.VISIBLE);
+        // No open reply on the relay phone: replies wait for their next text, unless SMS fallback takes them (one-to-one).
+        boolean canReply = cv == null || cv.canReply || (!cv.group && inbox.smsFallbackOn());
+        String startedWith = inbox.startedWith(conv);
+        if (startedWith != null && inbox.thread(conv).isEmpty()) {
+            notice.setText("Your first text to " + Numbers.pretty(startedWith) + " goes out as SMS from your relay phone.");
+            notice.setVisibility(View.VISIBLE);
+        } else {
+            notice.setText("You can reply after their next text reaches the relay phone.");
+            notice.setVisibility(canReply ? View.GONE : View.VISIBLE);
+        }
         notice.setBackgroundColor(ui.tint(hue));
         earlier.setVisibility(inbox.hasEarlier(conv) ? View.VISIBLE : View.GONE);
         earlier.setText(loadingEarlier ? "Loading…" : "Earlier messages");

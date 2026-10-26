@@ -288,6 +288,43 @@
 
   const words = { reaction, reactionText, quote, quoteText, sameWords, snippet, REACT_WORDS, KIND_SAID };
 
+  // ------------------------------------------------------------ phone numbers, for starting a conversation
+  // The relay phone keys a conversation started from the inbox from the number alone ("to:" + number), so every device
+  // writes the number the same way: its digits, with a leading + kept (00 at the start of a long number counts as +).
+  // A number without a country code goes as typed; the relay phone's SIM dials it as a local number.
+
+  /** The number as it goes to the relay phone, or null when the text isn't a number (3 to 20 digits). */
+  function canonicalNumber(typed) {
+    const t = String(typed == null ? "" : typed).trim();
+    if (!t || /[^0-9 .()\-+]/.test(t)) return null;
+    let plus = t.startsWith("+");
+    let digits = t.replace(/[^0-9]/g, "");
+    if (!plus && digits.startsWith("00") && digits.length > 10) { plus = true; digits = digits.slice(2); }
+    if (digits.length < 3 || digits.length > 20) return null;
+    return (plus ? "+" : "") + digits;
+  }
+
+  /** A number as people write it: (801) 555-0123 for a North American number, otherwise as it is. */
+  function prettyNumber(number) {
+    let d = String(number || "").replace(/[^0-9]/g, "");
+    if (d.length === 11 && d.startsWith("1")) d = d.slice(1);
+    return d.length === 10 ? "(" + d.slice(0, 3) + ") " + d.slice(3, 6) + "-" + d.slice(6) : String(number || "");
+  }
+
+  /** What identifies a person in a number: its last ten digits for a full-length number, all of them for a short code. */
+  function numberKey(number) {
+    const d = String(number || "").replace(/[^0-9]/g, "");
+    return d.length >= 10 ? d.slice(-10) : d;
+  }
+
+  /** Whether a conversation's name is just a number (someone not in the relay phone's contacts). */
+  const isNumber = (name) => /^[+()0-9 .\-]{3,}$/.test(String(name || "")) && String(name).replace(/[^0-9]/g, "").length >= 3;
+
+  /** The relay phone's own id for a conversation started with a number, which it keys the conversation from. */
+  const startedId = (number) => "to:" + number;
+
+  const numbers = { canonical: canonicalNumber, pretty: prettyNumber, key: numberKey, isNumber, startedId };
+
   // ---------------------------------------------------------------- what each sealed thing is bound to
   // Everything sealed for a conversation opens only as that conversation's (its keyed id), so the server can't show
   // one conversation's messages, name or pictures as another's, and a reply can't be pointed at the wrong person. A
@@ -336,7 +373,7 @@
     seal, open, sealBytes, openBytes, sealJson, openJson,
     inboxKeys, mac, convId, fpId, matchToken, matchText, normText, mediaLabel,
     normCode, newCode, prettyCode, linkSecrets, phoneSecrets, parseLink, linkUrl, linkQr, newToken, newTid, newKey,
-    AAD, fileOf, stemOf, pad13, deviceId, words
+    AAD, fileOf, stemOf, pad13, deviceId, words, numbers
   };
   if (typeof module !== "undefined" && module.exports) module.exports = TR2;
   else root.TR2 = TR2;

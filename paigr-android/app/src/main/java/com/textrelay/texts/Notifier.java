@@ -19,7 +19,9 @@ import java.util.Map;
 
 /**
  * One notification per conversation, in the system's messaging style, that opens that conversation. Normal alerts
- * make a sound and can pop up; quiet ones only appear in the shade; with alerts off there are none.
+ * make a sound and can pop up; quiet ones only appear in the shade; with alerts off there are none. They form one
+ * group, and the group's summary is posted whenever any of them is up: some phones show a grouped notification only
+ * under its summary (with no summary the sound played and nothing appeared), and Android shows a lone one on its own.
  */
 final class Notifier {
     static final String CHANNEL = "messages";
@@ -78,7 +80,27 @@ final class Notifier {
         }
         for (String conv : touched) nm.notify(idFor(conv), build(conv, recent.get(conv)));
         if (unopened > unopenedBefore) nm.notify(UNOPENED_ID, unopenedNotice());
-        if (recent.size() > 1) nm.notify(SUMMARY_ID, summary());
+        summarize();
+    }
+
+    /** The group's summary: up while any conversation's notification (or the unopened notice) is, silent, gone with the last. */
+    private void summarize() {
+        if (recent.isEmpty() && unopened == 0) nm.cancel(SUMMARY_ID);
+        else nm.notify(SUMMARY_ID, summary());
+    }
+
+    /** The conversation id of the sample notification (Settings, "Test notification"); tapping it opens the list. */
+    static final String TEST = "test";
+
+    /** A sample, through the same path a text takes, so what the shade shows can be checked on the phone itself. */
+    synchronized void test() {
+        try {
+            JSONObject m = new JSONObject().put("conv", TEST).put("name", "Paigr").put("sender", "Paigr").put("ts", System.currentTimeMillis())
+                    .put("text", "This is how a new text shows up. Swipe it away when you're done.");
+            show(java.util.Collections.singletonList(m));
+        } catch (org.json.JSONException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private Notification unopenedNotice() {
@@ -90,15 +112,26 @@ final class Notifier {
                 .setStyle(new Notification.BigTextStyle())
                 .setCategory(Notification.CATEGORY_STATUS)
                 .setGroup(GROUP)
+                .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(open(null))
+                .setDeleteIntent(swipedAway(UNOPENED))
                 .build();
     }
 
-    /** The notification was swiped away: the next text in that conversation starts a fresh one, not the old list again. */
+    /** What the unopened notice's swipe reports in place of a conversation. */
+    static final String UNOPENED = "unopened";
+
+    /**
+     * The notification was swiped away: the next text in that conversation starts a fresh one, not the old list again,
+     * and the summary goes with the last of them.
+     */
     synchronized void dismissed(String conv) {
-        if (conv != null) recent.remove(conv);
+        if (conv == null) return;
+        if (UNOPENED.equals(conv)) unopened = 0;
+        else recent.remove(conv);
+        summarize();
     }
 
     /** The conversation is on screen: its notification goes away. */
@@ -106,7 +139,7 @@ final class Notifier {
         if (conv == null) return;
         recent.remove(conv);
         nm.cancel(idFor(conv));
-        if (recent.size() <= 1) nm.cancel(SUMMARY_ID);
+        summarize();
     }
 
     synchronized void clearAll() {
@@ -171,10 +204,10 @@ final class Notifier {
                 .setContentTitle(name)
                 .setCategory(Notification.CATEGORY_MESSAGE)
                 .setGroup(GROUP)
-                .setShortcutId(conv)
+                .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)   // the text alerts; the summary never does
                 .setAutoCancel(true)
                 .setOnlyAlertOnce(false)
-                .setContentIntent(open(conv))
+                .setContentIntent(open(TEST.equals(conv) ? null : conv))
                 .setDeleteIntent(swipedAway(conv))
                 .setNumber(list.size())
                 .build();
@@ -196,14 +229,19 @@ final class Notifier {
     private Notification summary() {
         int n = 0;
         for (List<JSONObject> l : recent.values()) n += l.size();
+        String text;
+        if (recent.isEmpty()) text = "A message came in that couldn't be checked on this phone.";
+        else text = n + (n == 1 ? " new message" : " new messages") + " in " + recent.size() + (recent.size() == 1 ? " conversation" : " conversations");
         return new Notification.Builder(context, channel())
                 .setSmallIcon(R.drawable.ic_status)
                 .setColor(Ui.BRAND.base)
                 .setContentTitle("Paigr")
-                .setContentText(n + " new messages in " + recent.size() + " conversations")
+                .setContentText(text)
                 .setGroup(GROUP)
                 .setGroupSummary(true)
+                .setGroupAlertBehavior(Notification.GROUP_ALERT_CHILDREN)
                 .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
                 .setContentIntent(open(null))
                 .build();
     }

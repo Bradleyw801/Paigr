@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.17.0";
+  const VERSION = "0.18.0";
   const KEY = "relay.key";
   /** This device's place in a private inbox (v2), in a browser: { tid, token, key }. The Texts app keeps it itself. */
   const LINK = "relay.link2";
@@ -22,7 +22,7 @@
   const PULL_MAX = 96;
 
   const $ = (id) => document.getElementById(id);
-  const views = { connect: $("view-connect"), inbox: $("view-inbox"), thread: $("view-thread"), details: $("view-details"), settings: $("view-settings") };
+  const views = { connect: $("view-connect"), inbox: $("view-inbox"), thread: $("view-thread"), compose: $("view-compose"), details: $("view-details"), settings: $("view-settings") };
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
   // Inside the Texts Android app the page gets a small bridge: the app keeps the device key and shows notifications.
@@ -56,7 +56,9 @@
     scanFor: null,             // what the Texts app's scanner is open for: "link" or "approve"
     replyTo: null,             // the message the next reply quotes
     attachment: null,          // the file to go with the next message: { file, mime, name, bytes, url }
-    reactTo: null              // the message the emoji panel reacts to (else the panel types into the reply)
+    reactTo: null,             // the message the emoji panel reacts to (else the panel types into the reply)
+    started: new Map(),        // conversations started here with a number: conv -> { number, name }
+    unsent: new Map()          // started here and not yet in the inbox (nothing sent in them so far): conv -> record
   };
 
   // ------------------------------------------------------------ helpers
@@ -225,6 +227,12 @@
       const shown = { text, ts };
       const request = { text, n: TR2.b64u(TR2.random(16)), ts };
       const out = { conv: body.conv };
+      if (body.to) {
+        // A conversation started here: the request names the number (inside the seal, so only the relay phone reads
+        // it), and the inbox gets the conversation's name in case it doesn't have the conversation yet.
+        request.to = body.to;
+        out.ne = await TR2.sealJson(state.keys.enc, { name: body.name || TR2.numbers.pretty(body.to), group: false }, TR2.AAD.name(body.conv));
+      }
       if (att) {
         shown.fp = att.fp;
         shown.media = { mime: att.mime, w: att.w || 0, h: att.h || 0, bytes: att.bytes };
@@ -401,8 +409,7 @@
   function initials(name) {
     const n = String(name || "").trim();
     if (!n) return "#";
-    const digits = n.replace(/[^0-9+]/g, "").length >= Math.max(3, n.replace(/\s/g, "").length - 1);
-    if (digits) {
+    if (TR2.numbers.isNumber(n)) {   // a number for a name: its first two digits
       const d = n.replace(/[^0-9]/g, "");
       return d.length >= 2 ? d.slice(0, 2) : (d || "#");
     }
@@ -612,6 +619,9 @@
     const data = await api("/api/inbox");
     state.convs.clear();
     for (const c of data.items) state.convs.set(c.conv, c);
+    // A conversation started here stays listed until the inbox has it (its first text puts it there).
+    for (const conv of [...state.unsent.keys()]) if (state.convs.has(conv)) state.unsent.delete(conv);
+    for (const [conv, c] of state.unsent) state.convs.set(conv, c);
     if (!state.feed) state.feed = data.feed || null;
     if (typeof data.epoch === "number") state.epoch = data.epoch;
     state.relay = data.relay;
@@ -711,13 +721,91 @@
   function threadNotice(conv) {
     const c = state.convs.get(conv);
     const n = $("thread-notice");
-    if (c && c.canReply === false) {
+    const started = state.started.get(conv);
+    if (started && !(state.msgs.get(conv) || []).length) {
+      n.hidden = false;
+      n.className = "notice";
+      n.textContent = "Your first text to " + TR2.numbers.pretty(started.number) + " goes out as SMS from your relay phone.";
+    } else if (c && c.canReply === false && (c.group || !smsFallbackOn())) {
+      // No open reply on the relay phone: replies wait for their next text, unless SMS fallback takes them (one-to-one).
       n.hidden = false;
       n.className = "notice warn";
       n.textContent = "Replies open after their next text reaches the relay phone.";
     } else {
       n.hidden = true;
     }
+  }
+
+  /** Whether the relay phone says it can send SMS: a one-to-one conversation needs no open reply handle then. */
+  const smsFallbackOn = () => !!(state.relay && state.relay.smsFallback === true);
+
+  // ------------------------------------------------------------ starting a conversation
+
+  const startedKey = () => "tr2.started." + (state.link ? state.link.tid : "v1");
+
+  function loadStarted() {
+    state.started.clear();
+    try {
+      const raw = JSON.parse(storageGet(startedKey()) || "{}");
+      for (const [conv, v] of Object.entries(raw)) if (v && typeof v.number === "string") state.started.set(conv, { number: v.number, name: String(v.name || "") });
+    } catch { /* nothing kept */ }
+  }
+
+  function rememberStarted(conv, number, name) {
+    state.started.set(conv, { number, name });
+    while (state.started.size > 100) state.started.delete(state.started.keys().next().value);   // the oldest go first
+    const out = {};
+    for (const [k, v] of state.started) out[k] = v;
+    storageSet(startedKey(), JSON.stringify(out));
+  }
+
+  /**
+   * A conversation with a number typed here. One already listed under that number opens instead. Any other is keyed
+   * from the number the way the relay phone keys it (so the two agree on it without a word between them), named for
+   * the number until the relay phone names it, and listed here until the inbox has it, which its first text sees to;
+   * the relay phone sends that as SMS, and folds the conversation into one it already has with that number
+   * (PROTOCOL.md, New conversations). Null when what was typed isn't a number.
+   */
+  async function startConversation(typed, name) {
+    let number = TR2.numbers.canonical(typed);
+    if (!number || !state.keys) return null;
+    const key = TR2.numbers.key(number);
+    for (const c of state.convs.values()) if (!c.group && TR2.numbers.isNumber(c.name) && TR2.numbers.key(c.name) === key) return c.conv;
+    let called = String(name || "").trim();
+    for (const [conv, s] of state.started) {
+      if (TR2.numbers.key(s.number) !== key) continue;
+      if (state.convs.has(conv)) return conv;
+      // Folded by the relay phone into the conversation it had with that number: that one.
+      for (const c of state.convs.values()) if (Array.isArray(c.aliases) && c.aliases.includes(conv)) return c.conv;
+      // Gone from the list (left without a word): the same conversation again, keyed from the number as it was written then.
+      number = s.number;
+      if (!called) called = s.name;
+      break;
+    }
+    const conv = await TR2.convId(state.keys, TR2.numbers.startedId(number));
+    if (!called) called = TR2.numbers.pretty(number);
+    rememberStarted(conv, number, called);
+    if (!state.convs.has(conv)) {
+      const c = { conv, name: called, group: false, unread: 0, canReply: true, lastTs: Date.now(), lastText: "", lastDir: "out", lastSender: "", aliases: [conv], aliasKey: conv };
+      state.convs.set(conv, c);
+      state.unsent.set(conv, c);
+      if (!state.msgs.has(conv)) state.msgs.set(conv, []);
+      state.complete.add(conv);
+      renderInbox();
+    }
+    return conv;
+  }
+
+  function openCompose() {
+    $("to-input").value = "";
+    show("compose");
+    setTimeout(() => $("to-input").focus(), 50);
+  }
+
+  async function composeNext() {
+    const conv = await startConversation($("to-input").value, "");
+    if (!conv) { toast("Enter a phone number to text."); $("to-input").focus(); return; }
+    await openThread(conv);
   }
 
   /** The message's words as drawn: a quoted reply by its answer. */
@@ -1072,7 +1160,8 @@
     attach_perm: "Allow SMS fallback in Paigr Relay to send attachments.",
     too_big: "Too big to send as MMS from the relay phone.",
     mms_failed: "MMS failed on the relay phone.",
-    attach_fetch: "The relay phone couldn't fetch the attachment."
+    attach_fetch: "The relay phone couldn't fetch the attachment.",
+    start_sms: "Texting a new number needs SMS fallback on in Paigr Relay."
   };
 
   const notSent = (code) => typeof code === "string" && Object.prototype.hasOwnProperty.call(NOT_SENT, code) ? NOT_SENT[code] : "";
@@ -1577,6 +1666,8 @@
     renderThread(conv, true);
     try {
       const body = { conv, text, ts: now };
+      const started = state.started.get(conv);
+      if (started) { body.to = started.number; body.name = started.name; }
       if (att) {
         if (!state.link) throw Object.assign(new Error("Attachments need a private inbox."), { code: "local" });
         body.attachment = await storeAttachment(conv, now, att);
@@ -1591,9 +1682,10 @@
       if (arr.some(x => x.k === r.id)) { if (at >= 0) arr.splice(at, 1); }   // a sync already brought it
       else temp.k = r.id;
       state.pendingOut.add(r.id);
+      state.unsent.delete(conv);   // the inbox has the conversation now
       const c = state.convs.get(conv);
       if (c) { c.lastTs = temp.ts; c.lastText = text || (att ? mediaKind(att) : ""); c.lastDir = "out"; renderInbox(); }
-      if (r.canReply === false && state.current === conv) toast("Queued. It goes out after their next text reaches the relay phone.", 4000);
+      if (r.canReply === false && state.current === conv && ((c && c.group) || !smsFallbackOn())) toast("Queued. It goes out after their next text reaches the relay phone.", 4000);
       if (state.current === conv) renderThread(conv, true);
     } catch (e) {
       temp.status = "failed";
@@ -1757,6 +1849,7 @@
     if (!c || !c.conv) return false;
     const next = Object.assign({}, c);
     if (state.current === c.conv && state.view === "thread") next.unread = 0;
+    state.unsent.delete(c.conv);
     const cur = state.convs.get(c.conv);
     if (cur && SUMMARY_FIELDS.every(f => cur[f] === next[f])) return false;
     state.convs.set(c.conv, next);
@@ -1860,7 +1953,13 @@
     await loadInbox();
     if (state.current && (state.view === "thread" || state.view === "details")) {
       if (state.convs.has(state.current)) await openThread(state.current);
-      else backToInbox();   // it was folded into another conversation
+      else {
+        // Folded into another conversation (its summary vouches for the old id): that one, in its place.
+        let into = null;
+        for (const c of state.convs.values()) if (Array.isArray(c.aliases) && c.aliases.includes(state.current)) into = c;
+        if (into) { await openThread(into.conv); toast("That number is " + into.name + ": continued here.", 4000); }
+        else backToInbox();
+      }
     }
   }
 
@@ -2038,6 +2137,8 @@
     }
     state.link = l;
     state.keys = l ? await TR2.inboxKeys(TR2.unb64u(l.key)) : null;
+    state.unsent.clear();
+    loadStarted();
   }
 
   /** Keeps the link where it lives and opens the inbox. `how.created`: this device just started that inbox. */
@@ -2774,7 +2875,12 @@
   // ------------------------------------------------------------ wiring
 
   function backToInbox() {
+    const was = state.current;
     state.current = null;
+    // A conversation started here and left without a word: nothing to list.
+    if (was && state.unsent.has(was) && !(state.msgs.get(was) || []).length) {
+      state.unsent.delete(was); state.convs.delete(was); state.msgs.delete(was); state.complete.delete(was);
+    }
     show("inbox");
     renderInbox();
   }
@@ -2792,6 +2898,9 @@
     $("approve-input").addEventListener("keydown", e => { if (e.key === "Enter") linkWithCode($("approve-input").value); });
     wirePull();
     $("settings-btn").addEventListener("click", openSettings);
+    $("compose-btn").addEventListener("click", openCompose);
+    $("compose-back").addEventListener("click", backToInbox);
+    $("compose-form").addEventListener("submit", e => { e.preventDefault(); composeNext(); });
     $("settings-back").addEventListener("click", () => show("inbox"));
     $("back-btn").addEventListener("click", backToInbox);
     $("thread-title").addEventListener("click", openDetails);
@@ -2840,7 +2949,7 @@
       if (state.replyTo) { replyTo(null); return; }
       if (state.find.open) return;
       if (state.view === "details") { show("thread"); return; }
-      if (state.view === "thread") backToInbox();
+      if (state.view === "thread" || state.view === "compose") backToInbox();
     });
     $("lightbox").addEventListener("click", e => {
       if (e.target.id !== "lightbox-open" && e.target.tagName !== "VIDEO" && e.target.tagName !== "AUDIO") closeLightbox();

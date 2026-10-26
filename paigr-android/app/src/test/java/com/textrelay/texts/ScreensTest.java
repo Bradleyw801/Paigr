@@ -128,6 +128,18 @@ public class ScreensTest {
         a.inbox.relay.lastSeen = seen;
         a.changed(Inbox.RELAY, false);
 
+        // New message: the number, then the conversation it starts
+        a.openCompose();
+        settle();
+        a.compose.to.setText("(801) 555-0177");
+        settle();
+        shot(a, theme + "-1d-compose");
+        a.compose.next();
+        settle();
+        shot(a, theme + "-1e-new-thread");
+        a.onBackPressed();
+        settle();
+
         a.list.list.setSelection(0);
         settle();
         int maya = find(a.list.list, "Maya Chen");

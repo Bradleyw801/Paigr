@@ -655,6 +655,50 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
     assert.strictEqual((await call(phone("inbox"), "POST", "/v2/devices/name", { sn }))._status, 403, "a device in no inbox names nothing");
   }
 
+  // ================================================================ 8b. a conversation an inbox device starts with a number
+  {
+    const number = "+18015550177";
+    const started = "to:" + number;   // the relay phone's id for it, from the number alone
+    const wc = await W(texts, started);
+    const ts = Date.now();
+    const text = "Hi, is the bike still for sale?";
+    const e = await TR2.sealJson(texts.keys.enc, { text, ts }, TR2.AAD.message(wc, "out"));
+    const o = await TR2.sealJson(texts.keys.enc, { text, n: TR2.b64u(TR2.random(16)), ts, to: number }, TR2.AAD.out(wc));
+    // without its name, an unknown conversation is refused as before
+    assert.strictEqual((await call(texts, "POST", "/v2/send", { conv: wc, e, o }))._status, 404);
+    assert.strictEqual(await convOf(texts, started), undefined);
+    const ne = await TR2.sealJson(texts.keys.enc, { name: "(801) 555-0177", group: false }, TR2.AAD.name(wc));
+    const first = await call(texts, "POST", "/v2/send", { conv: wc, e, o, ne, mt: await TR2.matchToken(texts.keys, "out", text, "") });
+    assert.strictEqual(first._status, 200, JSON.stringify(first));
+    const made = await convOf(texts, started);
+    assert.strictEqual(made.ne, ne); assert.strictEqual(made.started, true); assert.strictEqual(made.lastDir, "out"); assert.strictEqual(made.unread, 0);
+    assert.strictEqual((await open(texts, made.lastE, TR2.AAD.message(wc, "out"))).text, text);
+    // every inbox device lists it under the name the device sealed, and the message carries that name
+    const listed = (await call(texts, "GET", "/v2/inbox")).items.find(c => c.conv === wc);
+    assert.ok(listed && listed.ne === ne, "listed with its name");
+    assert.strictEqual(col("v2-messages").get(texts.tid + "/" + first.id).ne, ne);
+    assert.ok(rings.some(x => x[0] === "tr2/" + relay3.tid + "/o" && x[1] === "queued"));
+    // the relay phone gets the request; the number is inside the seal and nowhere else
+    const mine = (await call(relay3, "GET", "/v2/relay/outbox")).items.find(i => i.id === first.id);
+    assert.ok(mine && mine.conv === wc, "queued for the relay phone");
+    assert.strictEqual((await open(relay3, mine.o, TR2.AAD.out(wc))).to, number);
+    const stored = JSON.stringify([...col("v2-messages").values(), ...col("v2-convs").values(), ...col("v2-feed").values()]);
+    assert.ok(!stored.includes(number) && !stored.includes(started), "the number never shows on the server");
+    await call(relay3, "POST", "/v2/relay/outbox/result", { id: first.id, status: "sent", via: "sms", canReply: false });
+    assert.strictEqual(col("v2-messages").get(texts.tid + "/" + first.id).via, "sms");
+    // the next text needs no name, and one that brings another doesn't rename the conversation
+    const e2 = await TR2.sealJson(texts.keys.enc, { text: "Still there?", ts: Date.now() }, TR2.AAD.message(wc, "out"));
+    const o2 = await TR2.sealJson(texts.keys.enc, { text: "Still there?", n: TR2.b64u(TR2.random(16)), ts: Date.now(), to: number }, TR2.AAD.out(wc));
+    const other = await TR2.sealJson(texts.keys.enc, { name: "Somebody", group: false }, TR2.AAD.name(wc));
+    assert.strictEqual((await call(texts, "POST", "/v2/send", { conv: wc, e: e2, o: o2, ne: other }))._status, 200);
+    assert.strictEqual((await convOf(texts, started)).ne, ne);
+    assert.strictEqual((await call(relay3, "GET", "/v2/relay/outbox")).items.length, 1);
+    // the relay phone's copy from its message store, under the same conversation, folds into the first text
+    r = await ingest(relay3, [{ conv: started, name: "(801) 555-0177", dir: "out", text, ts: ts + 1500, fp: fp(4100), src: "store" }]);
+    assert.strictEqual(r.folded, 1, JSON.stringify(r));
+    assert.strictEqual((await textsOf(texts, started)).filter(t => t === text).length, 1);
+  }
+
   // ================================================================ 9. leaving
   assert.strictEqual((await call(texts, "POST", "/v2/leave"))._status, 200);
   assert.strictEqual((await call(texts, "GET", "/v2/ping")).unlinked, true);

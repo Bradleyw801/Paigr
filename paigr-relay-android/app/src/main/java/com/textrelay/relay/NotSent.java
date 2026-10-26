@@ -25,9 +25,11 @@ final class NotSent {
     static final String TOO_BIG = "too_big";
     static final String MMS_FAILED = "mms_failed";
     static final String ATTACH_FETCH = "attach_fetch";
+    static final String START_SMS = "start_sms";
 
     private static final Map<String, String> WORDS = new HashMap<>();
     static {
+        WORDS.put(START_SMS, "A text to a new number goes out as SMS from the relay phone, which needs SMS fallback allowed (Relay app, step 5).");
         WORDS.put(STOPPED, "The relay phone stopped while sending this. Check the conversation on that phone before sending it again.");
         WORDS.put(OLD, "This reply is too old to send now. Send it again if you still want to.");
         WORDS.put(FUTURE, "This reply's time is off, so the relay phone didn't send it. Send it again.");

@@ -160,9 +160,35 @@ Which conversation a message-store thread belongs to is decided on the relay pho
 notifications showed (direction, time and a local hash of the words). The server is never asked: its answer would
 decide which number a reply falls back to as SMS.
 
+**New conversations.** An inbox device can start a conversation with a phone number (Paigr's New message). The relay
+phone's own id for it is made from the number alone, `"to:" + number`, where `number` is the digits with a leading `+`
+kept (a leading `00` on a long number counts as `+`; nothing else, so `(801) 555-0177` and `801-555-0177` are the one
+number `8015550177`), and the inbox id is `convId("to:" + number)` as for any conversation: the device and the relay
+phone key the same conversation without a word between them, and nothing in it can be pointed at another number. The
+device sends `POST /v2/send {conv, e, o, mt, ne}` with
+
+```
+o  = seal(Kenc, JSON{text, n, ts, to: number}, "tr2:o:" + conv)   // the number inside the seal, for the relay phone only
+ne = seal(Kenc, JSON{name, group: false}, "tr2:n:" + conv)         // the conversation's name, until the relay phone names it
+```
+
+A server that doesn't have the conversation makes it from `ne` (marked `started`); without `ne` an unknown
+conversation is refused as before, and `ne` on one it has changes nothing. The number never reaches the server in the
+open (`to` is inside `o`; the device's own id for the conversation is a keyed hash). The relay phone acts on `to` only
+when `convId("to:" + to)` is the conversation the request is filed under; such a request for a conversation it doesn't
+know is then not refused but starts the conversation there: if it already has a one-to-one conversation with that
+number (Messages told it, or the message store did) the text goes through that one and the started conversation is
+merged into it (`/v2/relay/merge`, so every device shows one conversation, and a device whose open conversation was
+merged follows it there); otherwise the started conversation is made on the relay phone, named for the number (the
+contact's name when Contacts is allowed), and the text goes out as SMS from the relay phone (`start_sms` when SMS
+fallback isn't allowed; the conversation waits, and the next try goes). Their answer in Messages, and the copy in the
+message store, join that conversation by the number. A text to the same number typed another way on the same device
+reuses the conversation it keyed first; the relay phone folds two started conversations with one number together too.
+
 ## The relay phone's status
 
-`POST /v2/relay/heartbeat` carries numbers and switches in the open (battery, listening, queue length, version) and
+`POST /v2/relay/heartbeat` carries numbers and switches in the open (battery, listening, queue length, version, and
+`smsFallback`: whether the phone may send SMS itself, so devices know a reply needn't wait for an open notification) and
 the phone's own words sealed: `sn = seal(Kenc, JSON{note, history, model}, "tr2:note")` (its last problem, why the
 history copy paused, and its model). The phone's words are its own: a refusal from the server is described by its
 status code alone (what the server wrote with it is dropped), and a crash or a failed merge by its kind, so nothing the
@@ -285,7 +311,7 @@ With a token: `GET /v2/ping`, `GET /v2/ticket` (a realtime ticket for `tr2/<tid>
 Relay phone: `POST /v2/relay/ingest`, `GET /v2/relay/outbox`, `POST /v2/relay/outbox/result`, `POST /v2/relay/heartbeat`,
 `POST /v2/relay/merge`.
 
-Inbox devices: `GET /v2/inbox`, `GET /v2/thread`, `GET /v2/sync`, `POST /v2/send {conv, e, o, mt, media?}`, `POST /v2/read`,
+Inbox devices: `GET /v2/inbox`, `GET /v2/thread`, `GET /v2/sync`, `POST /v2/send {conv, e, o, mt, media?, ne?}`, `POST /v2/read`,
 `GET /v2/status`, `POST /v2/push/register`, `POST /v2/push/test`, `POST /v2/relay/wake`,
 `POST /v2/import` and `/v2/import/done` (moving a v1 inbox in).
 

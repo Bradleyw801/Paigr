@@ -63,6 +63,11 @@ final class Link {
     /** Tests watch keyed fingerprints go by, to turn them back into the relay's own. */
     static volatile java.util.function.BiConsumer<String, String> onFp;
 
+    /** Tests: a phone that has worked out none of its conversations' keyed ids yet. */
+    static void forgetForTests() {
+        LOCAL.clear();
+    }
+
     String fpId(String fp) {
         String w = Crypto.hex(Crypto.hmac(mac, Crypto.utf8("fp:" + fp))).substring(0, 16);
         java.util.function.BiConsumer<String, String> watch = onFp;

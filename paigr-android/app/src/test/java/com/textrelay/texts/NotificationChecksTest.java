@@ -142,6 +142,47 @@ public class NotificationChecksTest {
         assertFalse("an incoming notification titled " + title(n), "You".contentEquals(title(n)));
     }
 
+    /**
+     * The group's summary is up whenever a conversation's notification is: a phone that shows grouped notifications
+     * only under their summary showed nothing (the sound played, the shade stayed empty) while the summary waited for a
+     * second conversation. The summary itself never alerts, and goes with the last notification.
+     */
+    @Test
+    public void everyConversationNotificationComesWithTheGroupsSummary() throws Exception {
+        NotificationManager nm = app.getSystemService(NotificationManager.class);
+        Notifier notifier = new Notifier(app);
+        String mom = l.convIdForTests("mom"), dad = l.convIdForTests("dad");
+        notifier.show(java.util.Collections.singletonList(new JSONObject().put("conv", mom).put("name", "Mom").put("sender", "Mom").put("text", "Call me").put("ts", 5L)));
+        Notification first = shadowOf(nm).getNotification(Notifier.idFor(mom));
+        assertNotNull(first);
+        assertEquals(Notifier.GROUP, first.getGroup());
+        assertEquals(Notification.GROUP_ALERT_CHILDREN, first.getGroupAlertBehavior());
+        assertNull("no shortcut this app never published", first.getShortcutId());
+        Notification summary = shadowOf(nm).getNotification(Notifier.SUMMARY_ID);
+        assertNotNull("the summary, with the first conversation already", summary);
+        assertTrue((summary.flags & Notification.FLAG_GROUP_SUMMARY) != 0);
+        assertTrue((summary.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0);
+        assertEquals(Notification.GROUP_ALERT_CHILDREN, summary.getGroupAlertBehavior());
+        assertEquals("1 new message in 1 conversation", String.valueOf(summary.extras.getCharSequence(Notification.EXTRA_TEXT)));
+        notifier.show(java.util.Collections.singletonList(new JSONObject().put("conv", dad).put("name", "Dad").put("sender", "Dad").put("text", "Golf?").put("ts", 6L)));
+        assertEquals("2 new messages in 2 conversations", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
+        // Mom's conversation opened: hers goes, the summary stays for Dad's; Dad's swiped away: nothing is left.
+        notifier.clear(mom);
+        assertNull(shadowOf(nm).getNotification(Notifier.idFor(mom)));
+        assertNotNull(shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
+        assertEquals("1 new message in 1 conversation", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
+        new Keepalive().onReceive(app, new android.content.Intent(Keepalive.ACTION_DISMISSED).putExtra(MainActivity.EXTRA_CONV, dad));
+        assertNull(shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
+        // The sample from Settings takes the same path, and opens the list rather than a conversation.
+        SyncService.notifier(app).test();
+        Notification sample = shadowOf(nm).getNotification(Notifier.idFor(Notifier.TEST));
+        assertNotNull(sample);
+        assertNotNull(shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
+        assertEquals("Paigr", String.valueOf(title(sample)));
+        assertTrue(lastText(sample).contains("This is how a new text shows up"));
+        assertNull(shadowOf(sample.contentIntent).getSavedIntent().getStringExtra(MainActivity.EXTRA_CONV));
+    }
+
     /** One sealed message is announced once, whatever key the server files it under (PROTOCOL: no replay as new). */
     @Test
     public void aSealedMessageReplayedUnderANewKeyIsNotAnnouncedAgain() throws Exception {
@@ -278,11 +319,13 @@ public class NotificationChecksTest {
         return new JSONObject().put("items", items).put("convs", convs).put("cursor", String.format(java.util.Locale.US, "f:%013d", cursor)).put("more", false);
     }
 
+    /** Shows the messages and returns the newest notification that isn't the group's summary. */
     private Notification notify(List<JSONObject> messages) {
         new Notifier(app).show(messages);
         List<Notification> all = shadowOf(app.getSystemService(NotificationManager.class)).getAllNotifications();
         assertFalse(all.isEmpty());
-        return all.get(all.size() - 1);
+        for (int i = all.size() - 1; i >= 0; i--) if ((all.get(i).flags & Notification.FLAG_GROUP_SUMMARY) == 0) return all.get(i);
+        throw new AssertionError("only a summary was posted");
     }
 
     private static CharSequence title(Notification n) {

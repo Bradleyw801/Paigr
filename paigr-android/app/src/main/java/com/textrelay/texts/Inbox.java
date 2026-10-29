@@ -516,7 +516,9 @@ final class Inbox {
         view = "thread";
         finding = false;
         SyncService.setOpenConversation(app, conv);
-        SyncService.notifier(app).clear(conv);
+        Notifier notifier = SyncService.notifier(app);
+        for (String a : knownAliases(conv)) notifier.clear(a);   // a notification filed before a merge too
+        notifier.clear(conv);
         Link at = link;
         Opener o = open;
         if (at == null) return;
@@ -1090,6 +1092,10 @@ final class Inbox {
         }, out -> {
             syncing = false;
             if (out.inbox != null) applyInbox(out.inbox);
+            Map<String, Integer> counts = new HashMap<>();
+            if (out.inbox != null) for (Model.Conv c : out.inbox.items) counts.put(c.conv, c.unread);
+            for (Round r : out.rounds) for (Model.Conv c : r.convs) counts.put(c.conv, c.unread);
+            if (!counts.isEmpty()) SyncService.notifier(app).unread(counts);
             boolean touched = false;
             String reopen = null;
             for (Round r : out.rounds) {

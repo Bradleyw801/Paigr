@@ -163,14 +163,14 @@ public class NotificationChecksTest {
         assertTrue((summary.flags & Notification.FLAG_GROUP_SUMMARY) != 0);
         assertTrue((summary.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0);
         assertEquals(Notification.GROUP_ALERT_CHILDREN, summary.getGroupAlertBehavior());
-        assertEquals("1 new message in 1 conversation", String.valueOf(summary.extras.getCharSequence(Notification.EXTRA_TEXT)));
+        assertEquals("1 unread message in 1 conversation", String.valueOf(summary.extras.getCharSequence(Notification.EXTRA_TEXT)));
         notifier.show(java.util.Collections.singletonList(new JSONObject().put("conv", dad).put("name", "Dad").put("sender", "Dad").put("text", "Golf?").put("ts", 6L)));
-        assertEquals("2 new messages in 2 conversations", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
+        assertEquals("2 unread messages in 2 conversations", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
         // Mom's conversation opened: hers goes, the summary stays for Dad's; Dad's swiped away: nothing is left.
         notifier.clear(mom);
         assertNull(shadowOf(nm).getNotification(Notifier.idFor(mom)));
         assertNotNull(shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
-        assertEquals("1 new message in 1 conversation", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
+        assertEquals("1 unread message in 1 conversation", String.valueOf(shadowOf(nm).getNotification(Notifier.SUMMARY_ID).extras.getCharSequence(Notification.EXTRA_TEXT)));
         new Keepalive().onReceive(app, new android.content.Intent(Keepalive.ACTION_DISMISSED).putExtra(MainActivity.EXTRA_CONV, dad));
         assertNull(shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
         // The sample from Settings takes the same path, and opens the list rather than a conversation.
@@ -181,6 +181,69 @@ public class NotificationChecksTest {
         assertEquals("Paigr", String.valueOf(title(sample)));
         assertTrue(lastText(sample).contains("This is how a new text shows up"));
         assertNull(shadowOf(sample.contentIntent).getSavedIntent().getStringExtra(MainActivity.EXTRA_CONV));
+    }
+
+    /**
+     * Notifications follow the inbox: each counts what the inbox holds unread, and goes once the conversation is read
+     * anywhere (relay phone, page, another device), even after the app was restarted; one already read isn't announced.
+     */
+    @Test
+    public void notificationsCountAndClearAsTheInboxDoes() throws Exception {
+        NotificationManager nm = app.getSystemService(NotificationManager.class);
+        Notifier notifier = new Notifier(app);
+        String mom = l.convIdForTests("mom"), dad = l.convIdForTests("dad");
+        java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+        counts.put(mom, 4);
+        notifier.unread(counts);
+        notifier.show(java.util.Collections.singletonList(new JSONObject().put("conv", mom).put("name", "Mom").put("sender", "Mom").put("text", "Call me").put("ts", 5L)));
+        assertEquals("the inbox's count, not what came in here", 4, shadowOf(nm).getNotification(Notifier.idFor(mom)).number);
+        notifier.show(java.util.Collections.singletonList(new JSONObject().put("conv", dad).put("name", "Dad").put("sender", "Dad").put("text", "Golf?").put("ts", 6L)));
+        assertEquals("5 unread messages in 2 conversations", summaryText(nm));
+        // Mom's read on the relay phone: hers goes, and the summary counts Dad's alone.
+        counts.clear();
+        counts.put(mom, 0);
+        notifier.unread(counts);
+        assertNull(shadowOf(nm).getNotification(Notifier.idFor(mom)));
+        assertEquals("1 unread message in 1 conversation", summaryText(nm));
+        // Android restarted the app: what's in the shade still goes when Dad's is read on the page.
+        Notifier restarted = new Notifier(app);
+        counts.clear();
+        counts.put(dad, 0);
+        restarted.unread(counts);
+        assertNull(shadowOf(nm).getNotification(Notifier.idFor(dad)));
+        assertNull("nothing left, so no summary", shadowOf(nm).getNotification(Notifier.SUMMARY_ID));
+
+        // Through the check itself: a text the inbox already holds as read is never announced; the counts come along.
+        java.util.Map<String, Integer> heard = new java.util.HashMap<>();
+        Sync s = new Sync(prefs, new Sync.Listener() {
+            @Override
+            public void onIncoming(List<JSONObject> messages) {
+                announced.add(messages);
+            }
+
+            @Override
+            public void onRelayState(boolean online, long lastSeen) {
+            }
+
+            @Override
+            public void onUnread(java.util.Map<String, Integer> unread) {
+                heard.putAll(unread);
+            }
+        });
+        s.link = l;
+        announced.clear();
+        String e = l.sealForTests(new JSONObject().put("text", "Read it already").put("sender", "Mom").put("name", "Mom")
+                .put("group", false).put("ts", System.currentTimeMillis()).put("fp", "0123456789abcdee"), Crypto.aadMessage(mom, "in"));
+        syncAnswer = page(new JSONArray().put(rec("m:9:read", mom, e)), new JSONArray().put(new JSONObject().put("conv", mom).put("unread", 0)));
+        s.checkOnce(new Hedy(l));
+        assertTrue("read before this phone heard of it", announced.isEmpty());
+        assertEquals(Integer.valueOf(0), heard.get(mom));
+    }
+
+    private static String summaryText(NotificationManager nm) {
+        Notification summary = shadowOf(nm).getNotification(Notifier.SUMMARY_ID);
+        assertNotNull(summary);
+        return String.valueOf(summary.extras.getCharSequence(Notification.EXTRA_TEXT));
     }
 
     /** One sealed message is announced once, whatever key the server files it under (PROTOCOL: no replay as new). */

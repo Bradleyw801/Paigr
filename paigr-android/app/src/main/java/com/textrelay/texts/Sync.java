@@ -22,6 +22,13 @@ final class Sync {
 
         /** The relay phone's state changed: silent for too long, or back again. */
         void onRelayState(boolean online, long lastSeen);
+
+        /**
+         * How many unread messages the inbox holds for the conversations this check heard about (a text came in, or
+         * the conversation was read somewhere: on the relay phone, on the page, on another device).
+         */
+        default void onUnread(java.util.Map<String, Integer> unread) {
+        }
     }
 
     static final int FAST_SECONDS = 8;
@@ -55,25 +62,29 @@ final class Sync {
             String start = inbox.optString("feed", "");
             if (!start.startsWith("f:")) throw new Hedy.ApiException(502, "the inbox did not say where its log starts");
             // The log is re-read a little before any cursor; what that turns up now is history, not news.
-            JSONObject r = read(hedy, start, null);
+            JSONObject r = read(hedy, start, null, null);
             relayState(r != null ? r.optJSONObject("relay") : inbox.optJSONObject("relay"));
             return interval();
         }
         List<JSONObject> incoming = new ArrayList<>();
-        JSONObject r = read(hedy, feed, incoming);
+        java.util.Map<String, Integer> unread = new java.util.HashMap<>();
+        JSONObject r = read(hedy, feed, incoming, unread);
+        // Read somewhere already by the time this phone heard of it: nothing to announce.
+        incoming.removeIf(m -> Integer.valueOf(0).equals(unread.get(m.optString("conv", ""))));
         // With the app open, a text in the conversation on screen is being read as it arrives; one in any other
         // conversation is announced like any other, so it isn't missed because the list happened to be open.
         if (screenOpen) {
             String open = openConv;
             if (open != null) incoming.removeIf(m -> open.equals(m.optString("conv", "")));
         }
+        if (!unread.isEmpty()) listener.onUnread(unread);   // first, so what's announced counts as the inbox does
         if (!incoming.isEmpty()) listener.onIncoming(incoming);
         if (r != null) relayState(r.optJSONObject("relay"));
         return interval();
     }
 
     /** Reads the log from the cursor until it is caught up, collecting incoming messages not seen before. */
-    private JSONObject read(Hedy hedy, String cursor, List<JSONObject> incoming) throws IOException {
+    private JSONObject read(Hedy hedy, String cursor, List<JSONObject> incoming, java.util.Map<String, Integer> unread) throws IOException {
         JSONObject r = null;
         String at = cursor;
         for (int round = 0; round < 10; round++) {
@@ -91,6 +102,9 @@ final class Sync {
             for (int i = 0; convs != null && i < convs.length(); i++) {
                 JSONObject c = convs.optJSONObject(i);
                 if (c != null && c.optJSONArray("merged") != null) merged.put(c.optString("conv"), c.optJSONArray("merged"));
+                if (c != null && unread != null && c.opt("conv") instanceof String && c.opt("unread") instanceof Number) {
+                    unread.put(c.optString("conv"), Math.max(0, c.optInt("unread")));   // a later round's is newer
+                }
             }
             if (items != null) {
                 for (int i = 0; i < items.length(); i++) {

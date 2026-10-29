@@ -606,6 +606,7 @@ async function ingest(ctx, me, body) {
 
   // Reply handles can appear or vanish without a new message, and a conversation read on the relay phone is read here.
   const touched = new Set(Object.keys(replyable).concat(Object.keys(reads)));
+  const readHere = new Set();
   for (const raw of touched) {
     const conv = convId(raw);
     if (!conv) continue;
@@ -620,6 +621,7 @@ async function ingest(ctx, me, body) {
       if (Number.isFinite(readTs) && existing.unread && (existing.lastTs || 0) <= readTs + READ_SLACK_MS) {
         existing.unread = 0;
         change = true;
+        readHere.add(conv);
       }
       if (!change) return null;
       existing.updatedAt = now;
@@ -631,7 +633,9 @@ async function ingest(ctx, me, body) {
   const logged = fresh.concat([...visible].filter(k => !freshKeys.has(k) && written.has(k)).map(k => written.get(k)));
   const live = logged.filter(v => !v.history);
   const historyConvs = [...new Set(logged.filter(v => v.history).map(v => v.conv))];
-  await feedAdd(ctx, tid, live.concat(historyConvs.map(conv => ({ k: "t:" + conv, conv, touch: true }))));
+  const loggedConvs = new Set(logged.map(v => v.conv));
+  await feedAdd(ctx, tid, live.concat(historyConvs.map(conv => ({ k: "t:" + conv, conv, touch: true })))
+    .concat([...readHere].filter(conv => !loggedConvs.has(conv)).map(seenEntry)));
   await notify(ctx, tid, fresh.filter(v => v.dir === "in" && !v.read));
   if (logged.length || latestByConv.size) {
     const lastKey = live.length ? live[live.length - 1].k : null;
@@ -1162,8 +1166,9 @@ async function feedSince(ctx, tid, cursor) {
     if (!more) break;
   }
   const reload = [...new Set([...latest.values()].filter(v => v.touch).map(v => v.conv))];
-  const items = [...latest.values()].filter(v => !v.touch).map(pub);
-  const convIds = [...new Set(items.map(m => m.conv).concat(reload).filter(Boolean))];
+  const seen = [...latest.values()].filter(v => v.seen).map(v => v.conv);
+  const items = [...latest.values()].filter(v => !v.touch && !v.seen).map(pub);
+  const convIds = [...new Set(items.map(m => m.conv).concat(reload, seen).filter(Boolean))];
   const convs = [];
   for (let i = 0; i < convIds.length; i += 25) {
     const r = await ctx.data.batchGet(CONV, convIds.slice(i, i + 25).map(c => P(tid, c)));
@@ -1246,12 +1251,25 @@ async function refile(ctx, tid, k, into) {
 async function markRead(ctx, me, body) {
   const conv = convId(body.conv);
   if (!conv) throw bad("conv required");
-  await updateConv(ctx, me.tid, conv, c => {
+  const wrote = await updateConv(ctx, me.tid, conv, c => {
     if (!c || !c.unread) return null;
     c.unread = 0;
     return c;
   });
+  // Every other device hears it, so a notification for what was just read goes away there too.
+  if (wrote) {
+    await feedAdd(ctx, me.tid, [seenEntry(conv)]);
+    await doorbell(ctx, me.tid, "i", "messages", { k: null, convs: [conv] });
+  }
   return json(200, { ok: true });
+}
+
+/**
+ * A conversation was read (on the relay phone, or on a device): the log carries the conversation's summary to every
+ * device, unread count included, without a message and without asking anyone to reload it.
+ */
+function seenEntry(conv) {
+  return { k: "r:" + conv + ":" + Date.now().toString(36), conv, seen: true };
 }
 
 async function status(ctx, me) {

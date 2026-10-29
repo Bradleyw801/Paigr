@@ -97,6 +97,11 @@ public class SyncService extends Service {
                 public void onRelayState(boolean online, long lastSeen) {
                     n.relayState(online, lastSeen);
                 }
+
+                @Override
+                public void onUnread(java.util.Map<String, Integer> unread) {
+                    n.unread(unread);
+                }
             });
         }
         return s;

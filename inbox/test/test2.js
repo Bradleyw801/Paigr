@@ -253,9 +253,25 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
   assert.deepStrictEqual(touchSync.reload, [await W(texts, conv)]);
   assert.ok(touchSync.items.every(x => !x.cv && !x.qs), "index fields stay on the server");
   assert.ok(touchSync.items.some(x => x.k === sent3.id));
-  // read on the relay phone
+  // read on the relay phone: every device hears it (the conversation's summary, unread 0), with no message and no reload
+  const beforeRead = "f:" + pad13(Date.now() - 1);
   await ingest(relay, [], { reads: { [await W(relay, conv)]: Date.now() + 120000 } });
   assert.strictEqual((await convOf(texts, conv)).unread, 0);
+  let heard = await call(texts, "GET", "/v2/sync", null, { feed: beforeRead });
+  assert.ok(heard.convs.some(c => c.conv === wconv && c.unread === 0), "a read on the relay phone reaches the devices");
+  assert.ok(heard.items.every(x => !x.seen), "a read is not a message");
+  // read on a device: the same
+  await ingest(relay, [{ conv, name: "Andy", sender: "+18015550123", dir: "in", text: "One more", ts: Date.now() + 200000, fp: fp(603), src: "notif" }]);
+  assert.strictEqual((await convOf(texts, conv)).unread, 1);
+  const beforeMark = "f:" + pad13(Date.now() - 1);
+  await call(texts, "POST", "/v2/read", { conv: wconv });
+  heard = await call(texts, "GET", "/v2/sync", null, { feed: beforeMark });
+  assert.ok(heard.convs.some(c => c.conv === wconv && c.unread === 0), "a read on one device reaches the others");
+  assert.ok([...col("v2-feed").values()].filter(v => v.seen).every(v => !v.touch), "a read asks nobody to reload");
+  assert.ok(heard.items.every(x => !x.seen && x.text !== "One more"));
+  const marks = [...col("v2-feed").values()].filter(v => v.seen).length;
+  await call(texts, "POST", "/v2/read", { conv: wconv });   // nothing unread: nothing logged
+  assert.strictEqual([...col("v2-feed").values()].filter(v => v.seen).length, marks);
 
   // pictures: two through the notification, three in the store: one more, not three
   const conv3 = "c3cccccccccccccccccccccccccccccc";

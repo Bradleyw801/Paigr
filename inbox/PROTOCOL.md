@@ -315,6 +315,10 @@ Inbox devices: `GET /v2/inbox`, `GET /v2/thread`, `GET /v2/sync`, `POST /v2/send
 `GET /v2/status`, `POST /v2/push/register`, `POST /v2/push/test`, `POST /v2/relay/wake`,
 `POST /v2/import` and `/v2/import/done` (moving a v1 inbox in).
 
+A conversation read anywhere (`POST /v2/read` from a device, or `reads` from the relay phone) puts a `seen` entry in the
+arrival log and rings the doorbell: `GET /v2/sync` then lists that conversation in `convs`, unread 0, with no message
+and no reload, so every device clears its notification for it and counts what the inbox counts.
+
 Moving a v1 inbox in: the inbox device waits (up to a minute) for the relay phone's first heartbeat in the new inbox,
 so every later text goes there, then seals and imports each conversation, calls `/v2/import/done`, and asks the
 relay phone to `resync` (send its last week again; copies fold by key). The v1 records stay on the server, readable

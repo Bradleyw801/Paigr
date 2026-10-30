@@ -72,7 +72,15 @@ final class InboxScreen extends Screen {
         title.setSingleLine(true);
         // On a narrow screen the chip and three buttons leave the title little room: it shrinks before it wraps.
         title.setAutoSizeTextTypeUniformWithConfiguration(18, 27, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-        titleRow.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        // BETA goes under the name: on a small phone there is no room beside it.
+        LinearLayout name = new LinearLayout(a);
+        name.setOrientation(LinearLayout.VERTICAL);
+        name.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        betaLp.topMargin = ui.dp(2);
+        betaLp.bottomMargin = ui.dp(2);
+        name.addView(ui.tag("BETA", Ui.BRAND.base), betaLp);
+        titleRow.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         chip = new LinearLayout(a);
         chip.setGravity(Gravity.CENTER_VERTICAL);

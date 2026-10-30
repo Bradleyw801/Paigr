@@ -203,6 +203,16 @@ final class Ui {
         return t;
     }
 
+    /** A small rounded tag in white letters on a pill of the given colour, like the BETA beside the app's name. */
+    TextView tag(String text, int fill) {
+        TextView t = label(text, 10f, HEAVY, 0xFFFFFFFF);
+        t.setLetterSpacing(0.09f);
+        t.setSingleLine(true);
+        t.setPadding(dp(7), dp(3), dp(7), dp(3));
+        t.setBackground(rounded(fill, 99));
+        return t;
+    }
+
     // ------------------------------------------------------------------ shapes
 
     GradientDrawable rounded(int color, float radiusDp) {

@@ -128,7 +128,11 @@ public class MainActivity extends Activity {
         top.setMinimumHeight(ui.dp(58));
         TextView title = ui.label("Paigr Relay", 27f, Ui.BLACK, ui.text);
         title.setLetterSpacing(-0.025f);
-        top.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        top.addView(title);
+        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        betaLp.setMarginStart(ui.dp(9));
+        top.addView(ui.tag("BETA", Ui.BRAND.base), betaLp);
+        top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
         top.addView(ui.iconButton(R.drawable.ic_gear, "More", ui.text, v -> startActivity(new Intent(this, MoreActivity.class))));
         col.addView(top);
 

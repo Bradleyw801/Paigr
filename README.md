@@ -1,5 +1,7 @@
 # Paigr
 
+Paigr is in beta, so expect some rough edges.
+
 Paigr lets you read and answer your texts on a different phone from the one with your SIM. I built it so I could
 carry a phone without Google services and still get every text, RCS included, from my real number.
 

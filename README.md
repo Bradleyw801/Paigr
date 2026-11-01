@@ -19,8 +19,8 @@ own private inbox. There's no account, email or password.
 
 ## Install the apps
 
-The signed builds are in [Brad White's apps](https://bradleyw801.github.io/sidephone-apps/). Add that repository to
-F-Droid or any F-Droid client to get updates, or download `relay.apk` and `texts.apk` straight from that page. If you
+The signed builds are in [Brad White's apps](https://bradleyw801.github.io/apps/). Add that repository to
+F-Droid or any F-Droid client to get updates, or download `Paigr-Relay.apk` and `Paigr.apk` straight from that page. If you
 build the apps yourself, your builds are signed with your own key, so they can't update the published ones. Uninstall
 those first.
 

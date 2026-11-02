@@ -541,12 +541,15 @@ final class Prefs {
         final long next;
         /** When the inbox first confirmed it, or 0; a merge is repeated once a while later for anything that was in flight. */
         final long confirmed;
+        /** When it was recorded: one the inbox keeps not having `into` for is given up on after a day. */
+        final long added;
 
-        Merge(String from, String into, long next, long confirmed) {
+        Merge(String from, String into, long next, long confirmed, long added) {
             this.from = from;
             this.into = into;
             this.next = next;
             this.confirmed = confirmed;
+            this.added = added;
         }
     }
 
@@ -556,7 +559,7 @@ final class Prefs {
             org.json.JSONArray a = mergeList();
             for (int i = 0; i < a.length(); i++) {
                 org.json.JSONObject o = a.optJSONObject(i);
-                if (o != null) out.add(new Merge(o.optString("from"), o.optString("into"), o.optLong("next"), o.optLong("confirmed")));
+                if (o != null) out.add(new Merge(o.optString("from"), o.optString("into"), o.optLong("next"), o.optLong("confirmed"), o.optLong("added")));
             }
             return out;
         }
@@ -584,7 +587,7 @@ final class Prefs {
                 org.json.JSONObject o = a.optJSONObject(i);
                 if (o != null && from.equals(o.optString("from")) && into.equals(o.optString("into"))) return;
             }
-            a.put(Json.obj("from", from, "into", into, "next", 0L, "confirmed", 0L));
+            a.put(Json.obj("from", from, "into", into, "next", 0L, "confirmed", 0L, "added", System.currentTimeMillis()));
             sp.edit().putString("merges", a.toString()).commit();
         }
     }
@@ -599,8 +602,9 @@ final class Prefs {
                 if (o == null) continue;
                 if (from.equals(o.optString("from")) && into.equals(o.optString("into"))) {
                     if (ok && o.optLong("confirmed") > 0) continue;   // done twice: finished
-                    if (ok) o = Json.obj("from", from, "into", into, "next", retryAt, "confirmed", now);
-                    else o = Json.obj("from", from, "into", into, "next", retryAt, "confirmed", o.optLong("confirmed"));
+                    long added = o.optLong("added", now);
+                    if (ok) o = Json.obj("from", from, "into", into, "next", retryAt, "confirmed", now, "added", added);
+                    else o = Json.obj("from", from, "into", into, "next", retryAt, "confirmed", o.optLong("confirmed"), "added", added);
                 }
                 next.put(o);
             }
@@ -767,6 +771,15 @@ final class Prefs {
 
     void setStoreMark(long ts) {
         sp.edit().putLong("store_mark", ts).apply();
+    }
+
+    /** When a Messages notification was last seen, across restarts (Relay.lastNotified). */
+    long lastNotified() {
+        return sp.getLong("last_notified", 0);
+    }
+
+    void setLastNotified(long ts) {
+        sp.edit().putLong("last_notified", ts).apply();
     }
 
 

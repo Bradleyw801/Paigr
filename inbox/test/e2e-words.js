@@ -53,7 +53,7 @@ async function check(name, fn) {
       e: await TR2.sealJson(keys.enc, { text: "Hello", sender: "Andy", name: "Andy", group: false, ts: t0, fp: f }, TR2.AAD.message(conv, "in")),
       ne: await TR2.sealJson(keys.enc, { name: "Andy", group: false }, TR2.AAD.name(conv)), mt: await TR2.matchToken(keys, "in", "Hello", "") }] } });
     // an honest heartbeat first, with a sealed note
-    await call("/v2/relay/heartbeat", { headers: H, body: { listening: true, model: "Pixel", sn: await TR2.sealJson(keys.enc, { note: "", history: "" }, TR2.AAD.note) } });
+    await call("/v2/relay/heartbeat", { headers: H, body: { listening: true, model: "Example Phone 2", sn: await TR2.sealJson(keys.enc, { note: "", history: "" }, TR2.AAD.note) } });
 
     // ------------------------------------------------ the dishonest server's edits
     const now = Date.now();

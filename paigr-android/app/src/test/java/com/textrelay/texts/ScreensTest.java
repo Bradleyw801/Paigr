@@ -229,6 +229,25 @@ public class ScreensTest {
         a.onBackPressed();
         settle();
 
+        // Filtered: the row at the end of the list, opened, and the conversation under it with its notice
+        a.list.showFiltered = true;
+        a.list.changed(Inbox.LIST, false);
+        settle();
+        a.list.list.setSelection(a.list.list.getAdapter().getCount() - 1);
+        settle();
+        shot(a, theme + "-9-filtered");
+        int prize = find(a.list.list, "(801) 555-0190");
+        assertTrue(prize >= 0);
+        a.openConversation(((Model.Conv) a.list.list.getAdapter().getItem(prize)).conv);
+        waitFor("the Filtered thread", () -> a.thread != null && a.thread.itemsForTests().size() >= 1);
+        shot(a, theme + "-9b-filtered-thread");
+        a.onBackPressed();
+        settle();
+        a.list.showFiltered = false;
+        a.list.changed(Inbox.LIST, false);
+        a.list.list.setSelection(0);
+        settle();
+
         a.list.startSearch('c');
         shot(a, theme + "-8-search");
         c.pause().stop().destroy();

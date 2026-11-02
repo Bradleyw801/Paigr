@@ -165,6 +165,8 @@ final class Opener {
         out.canReply = !Boolean.FALSE.equals(c.opt("canReply"));
         Double unread = num(c, "unread");
         out.unread = unread != null && unread > 0 ? (int) Math.floor(unread) : 0;
+        out.filtered = Boolean.TRUE.equals(c.opt("filtered"));
+        out.filteredBy = "user".equals(c.opt("filteredBy")) ? "user" : out.filtered ? "relay" : "";
         out.aliases = aliases;
         out.aliasKey = String.join(",", aliases);
         return out;
@@ -196,6 +198,26 @@ final class Opener {
      * conversation's (or an alias's) and its direction's. One that doesn't open is unchecked: no words, no name, no
      * attachment.
      */
+    /** The same message with its words, names and attachment taken away: shown as unchecked, whatever it said. */
+    static Model.Msg asUnchecked(Model.Msg m) {
+        Model.Msg out = new Model.Msg();
+        out.k = m.k;
+        out.conv = m.conv;
+        out.dir = m.dir;
+        out.status = m.status;
+        out.ts = m.ts;
+        out.read = m.read;
+        out.history = m.history;
+        out.via = m.via;
+        out.src = m.src;
+        out.code = m.code;
+        out.cid = m.cid;
+        out.seal = m.seal;
+        out.text = UNCHECKED_TEXT;
+        out.unchecked = true;
+        return out;
+    }
+
     Model.Msg openMessage(JSONObject m, List<String> aliases) {
         Model.Msg out = new Model.Msg();
         List<String> al = aliases != null ? aliases : Collections.singletonList(str(m, "conv"));
@@ -214,6 +236,7 @@ final class Opener {
         out.via = str(m, "via");
         out.src = str(m, "src");
         out.code = str(m, "code");
+        out.cid = str(m, "cid");
         String e = str(m, "e");
         // Which message this is, so each shows once: as its payload names it (its own time and keyed fingerprint) when
         // it opens, the same for a copy sealed again or filed again; otherwise its seal, which has one spelling.
@@ -285,6 +308,10 @@ final class Opener {
         out.queued = queued != null ? queued : Double.NaN;
         Object sms = r.opt("smsFallback");
         out.smsFallback = sms instanceof Boolean ? (Boolean) sms : null;
+        Double mmsMax = num(r, "mmsMax");
+        out.mmsMax = mmsMax != null && mmsMax > 0 ? mmsMax.longValue() : 0;
+        Object pictures = r.opt("imageReply");
+        out.imageReply = pictures instanceof Boolean ? (Boolean) pictures : null;
         JSONObject st = r.optJSONObject("store");
         if (st != null) {
             Model.Store s = new Model.Store();

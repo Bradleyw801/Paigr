@@ -41,6 +41,7 @@ public class Watchdog extends BroadcastReceiver {
         Relay relay = Relay.get(context);
         if (!relay.prefs.configured()) return;
         RelayService.start(context);
+        schedule(context);   // with the status notification hidden, nothing else keeps the alarm set
         relay.startPoller();
         ComponentName listener = new ComponentName(context, RelayListenerService.class);
         NotificationManager nm = context.getSystemService(NotificationManager.class);

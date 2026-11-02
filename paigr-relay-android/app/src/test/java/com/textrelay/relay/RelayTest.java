@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
@@ -246,6 +247,164 @@ public class RelayTest {
         assertTrue(server.calls("/api/relay/media").isEmpty());
     }
 
+    /** A video too big for the inbox goes up as its poster and size: the thread shows what it is and where it stayed. */
+    @Test
+    public void aVideoTooBigForTheInboxGoesUpAsItsPosterAndSize() throws Exception {
+        long now = System.currentTimeMillis();
+        byte[] poster = bytes(30_000, 5);
+        relay.mediaReader = (uri, mime) -> new Media.Prepared(null, new Media.Blob(poster, "image/jpeg", 1024, 576), 60L * 1024 * 1024);
+        relay.onNotification(conversation("c6", "Alice", false, "REPLY_C6", picture("Alice", "video/mp4", "content://media/6", now)));
+        relay.drain();
+        JSONObject item = server.calls("/api/relay/ingest").get(0).getJSONArray("items").getJSONObject(0);
+        JSONObject media = item.getJSONObject("media");
+        assertEquals("video/mp4", media.getString("mime"));
+        assertFalse(media.has("path"));
+        assertEquals(60L * 1024 * 1024, media.getLong("bytes"));
+        assertEquals(1024, media.getInt("w"));
+        assertEquals(576, media.getInt("h"));
+        assertEquals(mediaPath(item.getString("conv"), now, item.getString("fp"), "p", "jpg"), media.getString("preview"));
+        List<JSONObject> uploads = server.calls("/api/relay/media");
+        assertEquals(1, uploads.size());
+        assertEquals("preview", uploads.get(0).getJSONObject("_headers").getString("x-relay-kind"));
+        assertNull("nothing went wrong: the file is where it is", relay.lastMediaError);
+        // The reader itself: a stream past the limit is counted to its end, not kept.
+        try {
+            Media.prepare(bytes(Media.MAX_BYTES + 1, 2), "video/mp4");
+            fail("too big");
+        } catch (Media.TooBig e) {
+            assertEquals(Media.MAX_BYTES + 1, e.bytes);
+        }
+    }
+
+    /** The heartbeat says what a file from a device can become here: how big an MMS may be, and whether Messages takes pictures. */
+    @Test
+    public void theHeartbeatSaysWhatAttachmentsCanBecomeHere() throws Exception {
+        relay.heartbeat(relay.hedy());
+        JSONObject hb = server.calls("/api/relay/heartbeat").get(server.calls("/api/relay/heartbeat").size() - 1);
+        assertEquals("no SMS permission: no MMS at all", 0, hb.getInt("mmsMax"));
+        assertFalse(hb.getBoolean("imageReply"));
+        shadowOf(app).grantPermissions(android.Manifest.permission.SEND_SMS);
+        relay.onNotification(conversation("c5", "Alice", false, "REPLY_C5", from("Alice", "hi", System.currentTimeMillis())));
+        relay.drain();
+        relay.heartbeat(relay.hedy());
+        hb = server.calls("/api/relay/heartbeat").get(server.calls("/api/relay/heartbeat").size() - 1);
+        assertEquals("the carrier's limit less the headers", Mms.DEFAULT_MAX_BYTES - Mms.OVERHEAD, hb.getInt("mmsMax"));
+        assertFalse("Messages' plain reply takes no pictures", hb.getBoolean("imageReply"));
+        RemoteInput pictures = new RemoteInput.Builder("reply_text").setAllowDataType("image/*", true).build();
+        Notification.Action withPictures = new Notification.Action.Builder(null, "Reply",
+                PendingIntent.getBroadcast(app, 77, new Intent("REPLY_PICS").setPackage(app.getPackageName()), PendingIntent.FLAG_MUTABLE)).addRemoteInput(pictures).build();
+        assertTrue(Relay.takesPictures(withPictures));
+        assertFalse(Relay.takesPictures(null));
+    }
+
+    /**
+     * Android lets a notification's file be read only while the notification is up, and the upload may come much
+     * later (no connection, a restart): the relay copies it the moment the notification arrives and uploads the copy,
+     * then lets the copy go.
+     */
+    @Test
+    public void anAttachmentIsCopiedWhileItCanBeReadAndUploadedFromTheCopy() throws Exception {
+        long now = System.currentTimeMillis();
+        byte[] pdf = bytes(50_000, 11);
+        android.net.Uri uri = android.net.Uri.parse("content://media/41");
+        shadowOf(app.getContentResolver()).registerInputStream(uri, new java.io.ByteArrayInputStream(pdf));
+        relay.mediaReader = (u, mime) -> { throw new IOException("the notification is gone"); };   // too late to read it live
+        relay.onNotification(conversation("c41", "Alice", false, "REPLY_C41", picture("Alice", "application/pdf", uri.toString(), now)));
+        java.io.File stash = new java.io.File(app.getFilesDir(), "attach");
+        String[] copies = stash.list();
+        assertNotNull(copies);
+        assertEquals(1, copies.length);
+        assertEquals(pdf.length, new java.io.File(stash, copies[0]).length());
+
+        relay.drain();
+        JSONObject item = server.calls("/api/relay/ingest").get(0).getJSONArray("items").getJSONObject(0);
+        JSONObject media = item.getJSONObject("media");
+        assertEquals("application/pdf", media.getString("mime"));
+        assertEquals(mediaPath(item.getString("conv"), now, item.getString("fp"), "o", "bin"), media.getString("path"));
+        assertEquals(pdf.length, media.getInt("bytes"));
+        List<JSONObject> uploads = server.calls("/api/relay/media");
+        assertEquals(1, uploads.size());
+        assertEquals(FakeHedy.sha256(pdf), uploads.get(0).getString("_sha256"));
+        assertNull(relay.lastMediaError);
+        copies = stash.list();
+        assertTrue("the copy is let go once the inbox has it", copies == null || copies.length == 0);
+    }
+
+    /**
+     * Messages takes a conversation's notification down when it is opened on this phone: the inbox hears the
+     * conversation was read up to its newest text, once, and nothing is said about a conversation this phone doesn't know.
+     */
+    @Test
+    public void aNotificationTakenDownAsReadTellsTheInboxOnce() throws Exception {
+        long now = System.currentTimeMillis();
+        StatusBarNotification sbn = conversation("c42", "Alice", false, "REPLY_C42", from("Alice", "lunch?", now - 5000), from("Alice", "or coffee", now));
+        relay.onNotification(sbn);
+        relay.drain();
+        String conv = server.calls("/api/relay/ingest").get(0).getJSONArray("items").getJSONObject(0).getString("conv");
+
+        relay.onNotificationRead(sbn);
+        relay.drain();
+        List<JSONObject> ingests = server.calls("/api/relay/ingest");
+        assertEquals(2, ingests.size());
+        JSONObject reads = ingests.get(1).getJSONObject("reads");
+        assertEquals(now, reads.getLong(conv));
+        assertEquals(0, ingests.get(1).getJSONArray("items").length());
+
+        relay.onNotificationRead(sbn);           // Messages cancels and reposts; the same read isn't repeated
+        relay.drain();
+        assertEquals(2, server.calls("/api/relay/ingest").size());
+
+        StatusBarNotification stranger = conversation("c43", "Nobody", false, "REPLY_C43", from("Nobody", "hi", now));
+        relay.onNotificationRead(stranger);      // never relayed: nothing to mark
+        relay.drain();
+        assertEquals(2, server.calls("/api/relay/ingest").size());
+    }
+
+    /** The radio's no (airplane mode, no service) on an SMS fallback is reported as not sent, so the inbox can say so. */
+    @Test
+    public void anSmsTheRadioRefusesIsReportedNotSent() throws Exception {
+        long now = System.currentTimeMillis();
+        shadowOf(app).grantPermissions(android.Manifest.permission.SEND_SMS);
+        Person alice = new Person.Builder().setName("Alice").setKey("alice").setUri("tel:+18015550144").build();
+        relay.onNotification(conversation("c44", "Alice", false, "REPLY_C44", new Notification.MessagingStyle.Message("hey", now, alice)));
+        relay.drain();
+        String conv = server.calls("/api/relay/ingest").get(0).getJSONArray("items").getJSONObject(0).getString("conv");
+
+        Relay.reset();
+        relay = Relay.get(app);
+        Relay.smsWaitMs = 10_000;   // long enough for the radio's answer below to arrive
+        server.pendingOutbox.add(new JSONObject().put("id", "m:4:sms").put("conv", conv).put("text", "see you").put("ts", 1));
+        Throwable[] trouble = { null };
+        org.robolectric.shadows.ShadowSmsManager sms = shadowOf(android.telephony.SmsManager.getDefault());
+        org.robolectric.shadows.ShadowSmsManager.TextMultipartParams before = sms.getLastSentMultipartTextMessageParams();   // an earlier test's, maybe
+        Thread sending = new Thread(() -> {
+            try {
+                relay.processOutbox(relay.hedy());
+            } catch (Throwable t) {
+                trouble[0] = t;
+            }
+        }, "test-send");
+        sending.start();
+        long until = System.currentTimeMillis() + 10_000;
+        while (sms.getLastSentMultipartTextMessageParams() == before && System.currentTimeMillis() < until) Thread.sleep(10);
+        org.robolectric.shadows.ShadowSmsManager.TextMultipartParams sent = sms.getLastSentMultipartTextMessageParams();
+        assertNotNull(sent);
+        assertEquals("see you", String.join("", sent.getParts()));
+        assertEquals(1, sent.getSentIntents().size());
+        Intent saved = shadowOf(sent.getSentIntents().get(0)).getSavedIntent();
+        // The radio answers through the sent intent: not this time.
+        app.sendOrderedBroadcast(new Intent(saved.getAction()).setPackage(app.getPackageName()), null, null, null,
+                android.telephony.SmsManager.RESULT_ERROR_RADIO_OFF, null, null);
+        org.robolectric.shadows.ShadowLooper.idleMainLooper();
+        sending.join(10_000);
+        assertFalse(sending.isAlive());
+        assertNull(String.valueOf(trouble[0]), trouble[0]);
+        JSONObject report = server.calls("/api/relay/outbox/result").get(0);
+        assertEquals("failed", report.getString("status"));
+        assertEquals(NotSent.SMS_FAILED, report.getString("code"));
+        assertEquals("sms", report.getString("via"));
+    }
+
     @Test
     public void unreadableAttachmentsStillTellTheInboxWhatTheyWere() throws Exception {
         long now = System.currentTimeMillis();
@@ -267,9 +426,16 @@ public class RelayTest {
         relay.drain();
         JSONObject media = server.calls("/api/relay/ingest").get(0).getJSONArray("items").getJSONObject(0).getJSONObject("media");
         assertEquals("audio/amr", media.getString("mime"));
-        assertFalse(media.has("path"));
-        assertTrue(server.calls("/api/relay/media").isEmpty());   // not even tried
-        assertTrue(relay.lastMediaError, relay.lastMediaError.contains("can't store"));
+        if (v2()) {
+            // A private inbox keeps sealed bytes of anything: the file goes up as it is, and the device plays what it can.
+            assertTrue(media.has("path"));
+            assertEquals(1, server.calls("/api/relay/media").size());
+            assertNull(relay.lastMediaError);
+        } else {
+            assertFalse(media.has("path"));
+            assertTrue(server.calls("/api/relay/media").isEmpty());   // not even tried
+            assertTrue(relay.lastMediaError, relay.lastMediaError.contains("can't store"));
+        }
         assertTrue(Media.sendable("image/heic"));                   // turned into a JPEG first
         assertFalse(Media.sendable("audio/amr"));
         assertFalse(Media.sendable("video/3gpp"));
@@ -363,7 +529,7 @@ public class RelayTest {
         return b;
     }
 
-    private Notification.MessagingStyle.Message picture(String name, String mime, String uri, long time) {
+    Notification.MessagingStyle.Message picture(String name, String mime, String uri, long time) {
         Person p = new Person.Builder().setName(name).setKey(name.toLowerCase(Locale.US)).build();
         return new Notification.MessagingStyle.Message("", time, p).setData(mime, android.net.Uri.parse(uri));
     }

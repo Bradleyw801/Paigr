@@ -107,6 +107,7 @@ build).
 node server/test/store.test.js       # the store: saving, expiring, loading
 node server/test/selfhost.test.js    # the server the way people run it: linking, texts, pictures, the socket, a restart
 node server/test/e2e-selfhost.js     # the page in a browser against it (needs Playwright)
+node test/smoke.js http://127.0.0.1:8787   # a running server, yours or the hosted one: a scratch inbox goes through every step and leaves
 ```
 
 The inbox code in `functions/` has its own tests in `test/`. `test/run-all.sh` runs every suite in this folder (you

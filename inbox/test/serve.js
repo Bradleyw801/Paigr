@@ -49,7 +49,7 @@ http.createServer(async (req, res) => {
     if (u.pathname === "/_debug/dump") {   // tests read what the server holds
       const { col } = require("./harness");
       const dump = {};
-      for (const c of ["v2-messages", "v2-convs", "v2-devices", "v2-offers", "messages", "conversations"]) dump[c] = Object.fromEntries(col(c).entries());
+      for (const c of ["v2-messages", "v2-convs", "v2-devices", "v2-offers", "v2-feed", "messages", "conversations"]) dump[c] = Object.fromEntries(col(c).entries());
       dump.files = Object.fromEntries([...files.entries()].map(([k, v]) => [k, { type: v.type, bytes: Buffer.from(v.b64, "base64").length }]));
       res.writeHead(200, { "content-type": "application/json" });
       return res.end(JSON.stringify(dump));

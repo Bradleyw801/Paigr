@@ -2,7 +2,7 @@
 (function () {
   "use strict";
 
-  const VERSION = "0.18.1";
+  const VERSION = "1.1.0";
   const KEY = "relay.key";
   /** This device's place in a private inbox (v2), in a browser: { tid, token, key }. The Texts app keeps it itself. */
   const LINK = "relay.link2";
@@ -45,12 +45,15 @@
     epoch: null,               // bumps when the inbox reorganizes conversations (two found to be one): reload then
     relay: null,
     current: null,             // open conversation id
-    pendingOut: new Set(),     // message keys waiting for a sent/failed status
+    pendingOut: new Map(),     // message key -> conversation, for replies waiting for a sent/failed status
+    readsOwed: new Set(),      // conversations read here that the inbox wasn't told of yet (the call failed)
+    clockSkew: 0,              // the inbox's clock less this device's, so the relay phone's check-ins are judged by one clock
     syncTimer: null,
     syncing: false,
     view: "inbox",
     loadedInbox: false,
     filter: "",                // inbox search text, lowercased
+    showFiltered: false,       // the Filtered section of the list, opened
     find: { open: false, query: "", marks: [], index: -1 },
     detailsTab: "photos",
     scanFor: null,             // what the Texts app's scanner is open for: "link" or "approve"
@@ -107,9 +110,19 @@
       body = JSON.stringify(body);
       headers["content-type"] = "application/json";
     }
-    const res = await fetch(url, { method: o.method, headers, body, cache: "no-store" });
+    // A request that stalls (a half-open connection on mobile) gives up, so syncing never freezes behind it.
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), o.timeoutMs || 30000);
+    let res, text;
+    try {
+      res = await fetch(url, { method: o.method, headers, body, cache: "no-store", signal: ac.signal });
+      text = await res.text();
+    } catch (e) {
+      throw Object.assign(new Error("Can't reach the inbox. Check this device's connection."), { network: true, cause: e });
+    } finally {
+      clearTimeout(timer);
+    }
     let data = null;
-    const text = await res.text();
     try { data = text ? JSON.parse(text) : null; } catch { data = { error: text.slice(0, 200) }; }
     if (res.status === 401 || res.status === 403) {
       // A private inbox says plainly when a device isn't in it; anything else is a refusal, not an unlink.
@@ -227,6 +240,7 @@
       const shown = { text, ts };
       const request = { text, n: TR2.b64u(TR2.random(16)), ts };
       const out = { conv: body.conv };
+      if (body.cid) out.cid = body.cid;
       if (body.to) {
         // A conversation started here: the request names the number (inside the seal, so only the relay phone reads
         // it), and the inbox gets the conversation's name in case it doesn't have the conversation yet.
@@ -240,8 +254,9 @@
         out.media = { path: att.path };
         if (att.preview) out.media.preview = att.preview;
       }
-      // How every inbox device shows it: a message this device sent, at this time.
-      out.e = await TR2.sealJson(state.keys.enc, shown, TR2.AAD.message(body.conv, "out"));
+      // How every inbox device shows it: a message this device sent, at this time (sealed once, the same bytes when
+      // the request goes again, so the inbox's copy names itself as this row expects).
+      out.e = body.sealed || await TR2.sealJson(state.keys.enc, shown, TR2.AAD.message(body.conv, "out"));
       // The request the relay phone acts on: sealed for this conversation alone, with a nonce and the time, so the
       // server can't point it at someone else or have it sent twice (see PROTOCOL.md, Replies).
       out.o = await TR2.sealJson(state.keys.enc, request, TR2.AAD.out(body.conv));
@@ -304,6 +319,19 @@
    * someone else's words, and without any attachment. Of what the server says about a message's files, only where they
    * are is used, and only for files sealed for this message: its time and fingerprint, as its payload names them.
    */
+  /** The same message with its words, names and attachment taken away: shown as unchecked, whatever it said. */
+  function asUnchecked(m) {
+    const out = Object.assign({}, m);
+    delete out.media;
+    out.text = "(This message couldn't be checked on this device, so it isn't shown.)";
+    out.unchecked = true;
+    out.sender = "";
+    out.name = "";
+    out.group = false;
+    out.moved = false;
+    return out;
+  }
+
   async function openMessage(m, aliases) {
     if (!m || typeof m !== "object") return m;
     const al = aliases || [m.conv];
@@ -316,6 +344,7 @@
     // Which message this is, so each shows once: as its payload names it (its own time and keyed fingerprint) when it
     // opens, the same for a copy sealed again (a resync) or filed again; otherwise its seal, which has one spelling.
     out.seal = typeof m.e === "string" && m.e.length >= 22 ? "e:" + m.e.slice(-22) : "";
+    out.cid = typeof m.cid === "string" ? m.cid : "";
     const named = !n.unreadable && typeof n.name === "string" ? n.name : "";
     if (p.unreadable) {
       out.text = "(This message couldn't be checked on this device, so it isn't shown.)";
@@ -369,6 +398,9 @@
       lastSender: last.unreadable ? "" : (last.sender || ""),
       canReply: c.canReply !== false,
       unread: Number.isFinite(c.unread) && c.unread > 0 ? Math.floor(c.unread) : 0,
+      // Under Filtered: Messages on the relay phone keeps it quiet (its spam folder), or the owner put it there.
+      filtered: c.filtered === true,
+      filteredBy: c.filteredBy === "user" ? "user" : c.filtered === true ? "relay" : "",
       updatedAt: c.updatedAt,
       aliases,
       aliasKey: aliases.join(",")
@@ -551,7 +583,7 @@
   /** How the relay phone is doing: a word for the chip, a line for the banner and Settings, and whether to offer a fix. */
   function relayHealth(r) {
     if (!r || !r.lastSeen) return { level: "none", chip: "Relay", text: "Relay phone hasn't checked in yet" };
-    if (Date.now() - r.lastSeen >= RELAY_OFFLINE_MS) return { level: "bad", chip: "Relay offline", text: "Relay phone is offline", fix: true };
+    if (Date.now() + state.clockSkew - r.lastSeen >= RELAY_OFFLINE_MS) return { level: "bad", chip: "Relay offline", text: "Relay phone is offline", fix: true };
     if (r.listening === false) return { level: "warn", chip: "Check Relay", text: "Relay phone isn't reading Messages", fix: true };
     const battery = Number.isFinite(r.battery) && r.battery > 0 ? " " + Math.round(r.battery) + "%" : "";
     return { level: "ok", chip: "Relay" + battery, text: "Relay phone connected" };
@@ -639,8 +671,29 @@
     const empty = $("inbox-empty");
     empty.hidden = items.length > 0;
     empty.textContent = q ? "Nothing matches “" + q + "”" : "No texts yet";
-    for (const c of items) {
-      const li = paint(el("li", "conv" + (c.unread ? " unread" : "")), c.conv);
+    // Filtered conversations (Messages' spam folder on the relay phone, and what the owner moved there) sit under
+    // their own row at the end, shown on request.
+    const filtered = items.filter(c => c.filtered);
+    for (const c of items.filter(c => !c.filtered)) list.appendChild(convRow(c));
+    if (filtered.length) {
+      const head = el("li", "filtered-head" + (state.showFiltered ? " open" : ""));
+      head.id = "filtered-head";
+      head.setAttribute("role", "button");
+      head.tabIndex = 0;
+      head.setAttribute("aria-expanded", state.showFiltered ? "true" : "false");
+      head.appendChild(el("span", "filtered-name", "Filtered"));
+      head.appendChild(el("span", "filtered-count", String(filtered.length)));
+      const toggle = () => { state.showFiltered = !state.showFiltered; renderInbox(); };
+      head.addEventListener("click", toggle);
+      head.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+      list.appendChild(head);
+      if (state.showFiltered) for (const c of filtered) list.appendChild(convRow(c));
+    }
+  }
+
+  function convRow(c) {
+    {
+      const li = paint(el("li", "conv" + (c.unread ? " unread" : "") + (c.filtered ? " filtered" : "")), c.conv);
       li.dataset.conv = c.conv;
       li.appendChild(fillAvatar(el("span", "avatar"), c));
       const main = el("div", "conv-main");
@@ -653,7 +706,7 @@
       if (c.unread) side.appendChild(el("span", "badge", c.unread > 99 ? "99+" : String(c.unread)));
       li.appendChild(side);
       li.addEventListener("click", () => openThread(c.conv));
-      list.appendChild(li);
+      return li;
     }
   }
 
@@ -670,8 +723,39 @@
 
   function unreadElsewhere() {
     let n = 0;
-    for (const c of state.convs.values()) if (c.conv !== state.current) n += c.unread || 0;
+    for (const c of state.convs.values()) if (c.conv !== state.current && !c.filtered) n += c.unread || 0;
     return n;
+  }
+
+  /** The owner moves a conversation under Filtered or back to the inbox; the relay phone's reading no longer moves it. */
+  async function setFiltered(conv, filtered) {
+    try {
+      await api("/api/filter", { method: "POST", body: { conv, filtered } });
+    } catch {
+      toast(filtered ? "Couldn't move it to Filtered. Check the connection." : "Couldn't move it to the inbox. Check the connection.", 3000);
+      return false;
+    }
+    const c = state.convs.get(conv);
+    if (c) {
+      c.filtered = filtered;
+      c.filteredBy = "user";
+      if (filtered && state.current !== conv) state.showFiltered = true;
+    }
+    renderInbox();
+    renderBackCount();
+    if (state.current === conv) { threadNotice(conv); renderDetailsFilter(conv); }
+    toast(filtered ? "Moved to Filtered." : "Moved to the inbox.", 2000);
+    return true;
+  }
+
+  function renderDetailsFilter(conv) {
+    const b = $("details-filter");
+    const c = state.convs.get(conv);
+    if (!b) return;
+    b.hidden = !c;
+    if (!c) return;
+    b.textContent = c.filtered ? "Move to the inbox" : "Move to Filtered";
+    b.onclick = () => setFiltered(conv, !c.filtered);
   }
 
   function renderBackCount() {
@@ -696,24 +780,34 @@
     $("msg-list").innerHTML = "";
     $("load-more").hidden = true;
     show("thread");
+    tellWorkerWhatIsOpen();
+    closeNotifications(conv);
+    // Opened is read: the count goes now, here and on the inbox, however the page's fetch goes.
+    if (c && c.unread) { c.unread = 0; renderInbox(); markRead(conv); }
+    if (state.msgs.has(conv)) renderThread(conv, true);   // what's held shows at once; the page replaces it
+    const had = new Set((state.msgs.get(conv) || []).map(m => m.k));
     try {
       const data = await api("/api/thread?conv=" + encodeURIComponent(conv));
-      state.msgs.set(conv, tidy(data.items));
+      state.msgs.set(conv, withOwn(conv, data.items, had));
       state.cursors.set(conv, data.cursor);
       if (!data.cursor) state.complete.add(conv); else state.complete.delete(conv);
       if (data.conversation) state.convs.set(conv, data.conversation);
+      if (state.pageNeeded === conv) state.pageNeeded = null;
       // Another conversation was opened (or the list) while this one loaded: never draw it under that one's name.
       if (state.current !== conv) return;
       renderThread(conv, true);
       const now = state.convs.get(conv);
-      if (now && now.unread) {
+      if (now && now.unread) {   // a count this device didn't know of
         now.unread = 0;
         renderInbox();
-        api("/api/read", { method: "POST", body: { conv } }).catch(() => {});
+        markRead(conv);
       }
     } catch (e) {
       if (e.auth) return unlinkedHere(e.message);
-      if (state.current === conv) toast(e.message);
+      if (state.current === conv) {
+        if (!state.msgs.has(conv)) { state.pageNeeded = conv; threadNotice(conv); }
+        toast(e.message);
+      }
     }
     if (!native && state.current === conv) setTimeout(() => $("msg-input").focus(), 50);
   }
@@ -722,10 +816,28 @@
     const c = state.convs.get(conv);
     const n = $("thread-notice");
     const started = state.started.get(conv);
-    if (started && !(state.msgs.get(conv) || []).length) {
+    if (c && c.filtered) {
+      // Under Filtered: a word on why, and the way back, right here.
+      n.hidden = false;
+      n.className = "notice filtered";
+      n.textContent = "";
+      n.appendChild(el("span", "", c.filteredBy === "user" ? "In Filtered. " : "In Filtered: Messages on the relay phone keeps this conversation quiet (spam, or notifications off for it). "));
+      const back = el("button", "notice-btn", "Move to the inbox");
+      back.type = "button";
+      back.addEventListener("click", () => setFiltered(conv, false));
+      n.appendChild(back);
+    } else if (started && !(state.msgs.get(conv) || []).length) {
       n.hidden = false;
       n.className = "notice";
       n.textContent = "Your first text to " + TR2.numbers.pretty(started.number) + " goes out as SMS from your relay phone.";
+    } else if (state.pageNeeded === conv && !state.msgs.has(conv)) {
+      n.hidden = false;
+      n.className = "notice warn";
+      n.textContent = "Couldn't load this conversation. It comes when the inbox answers again.";
+    } else if (relayHealth(state.relay).level === "bad") {
+      n.hidden = false;
+      n.className = "notice warn";
+      n.textContent = "The relay phone is offline. Texts go out when it's back.";
     } else if (c && c.canReply === false && (c.group || !smsFallbackOn())) {
       // No open reply on the relay phone: replies wait for their next text, unless SMS fallback takes them (one-to-one).
       n.hidden = false;
@@ -738,6 +850,31 @@
 
   /** Whether the relay phone says it can send SMS: a one-to-one conversation needs no open reply handle then. */
   const smsFallbackOn = () => !!(state.relay && state.relay.smsFallback === true);
+
+  /** The service worker hears which conversation is on screen, so a push for it shows no notification over it. */
+  function tellWorkerWhatIsOpen() {
+    try {
+      const w = navigator.serviceWorker && navigator.serviceWorker.controller;
+      if (w) w.postMessage({ type: "viewing", conv: state.view === "thread" || state.view === "details" ? state.current : null, visible: document.visibilityState === "visible" });
+    } catch { /* no worker */ }
+  }
+
+  /** A conversation read anywhere: its notifications on this device go. */
+  function closeNotifications(conv) {
+    try {
+      if (!("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.getRegistration().then(reg => reg && reg.getNotifications({ tag: "conv-" + conv })).then(list => { for (const n of list || []) n.close(); }).catch(() => {});
+    } catch { /* no worker */ }
+  }
+
+  /** The inbox is told a conversation was read; a call that fails is owed, and made on the next sync that gets through. */
+  function markRead(conv) {
+    api("/api/read", { method: "POST", body: { conv } }).then(() => state.readsOwed.delete(conv)).catch(() => state.readsOwed.add(conv));
+  }
+
+  function settleReads() {
+    for (const conv of [...state.readsOwed]) markRead(conv);
+  }
 
   // ------------------------------------------------------------ starting a conversation
 
@@ -991,10 +1128,17 @@
       }
       li.appendChild(el("div", "stamp", fmtClock(m.ts) + (m.moved ? " · moved from your first inbox" : "")));
       if (m.dir === "out" && (m.status === "failed" || m.status === "queued" || row.index === lastOut)) {
+        const again = m.status === "failed" && m.temp && (m.text || m.stored);
         const status = m.status === "queued" ? "Sending…"
-          : m.status === "failed" ? "Not sent. " + (notSent(m.code) || (!state.link && m.error) || "The relay phone couldn't send it.")
+          : waitsForConnection(m) ? "Waiting for a connection. Tap to send now."
+          : m.status === "failed" ? "Not sent. " + (notSent(m.code) || (!state.link && m.error) || "The relay phone couldn't send it.") + (again ? " Tap to retry." : "")
           : m.via === "sms" ? "Sent as SMS" : m.via === "mms" ? "Sent as MMS" : m.via === "phone" ? "Sent from the relay phone" : "Sent";
-        li.appendChild(el("div", "stamp status " + (m.status || ""), status));
+        const stamp = el("div", "stamp status " + (m.status || ""), status);
+        if (again) {
+          stamp.style.cursor = "pointer";
+          stamp.addEventListener("click", (e) => { e.stopPropagation(); sendText(m.conv, m.text, m.att || null, m); });
+        }
+        li.appendChild(stamp);
       }
       list.appendChild(li);
     }
@@ -1151,8 +1295,8 @@
    */
   const NOT_SENT = {
     stopped: "Relay stopped mid-send. Check the relay phone first.",
-    old: "Too old to send.",
-    future: "Its time was off.",
+    old: "Too old to send by the time it reached the relay phone.",
+    future: "This device's clock is ahead of the relay phone's. Check the time.",
     again: "Already handled once.",
     unknown_conv: "The relay phone doesn't know this conversation.",
     unchecked: "The relay phone couldn't check it.",
@@ -1160,8 +1304,10 @@
     group: "Group replies work after their next text.",
     no_number: "No number for SMS fallback.",
     sms_failed: "SMS fallback failed.",
-    before_move: "From before the move.",
-    local: "Couldn't reach the inbox.",
+    before_move: "Written before the relay phone moved to this inbox.",
+    local: "Couldn't read that file on this device.",
+    offline: "Couldn't reach the inbox.",
+    refused: "The inbox refused it.",
     too_big_here: "That file is too big to send (25 MB at most).",
     no_attach: "Attachments can't be sent to this conversation from here.",
     attach_perm: "Allow SMS fallback in Paigr Relay to send attachments.",
@@ -1508,6 +1654,22 @@
       bubble.appendChild(img);
       return;
     }
+    if (kind === "Video" && preview) {
+      // A picture of the video with a play badge; one too big for the inbox opens as its poster and says where it is.
+      const box = el("div", "video-pic");
+      const img = el("img", "pic");
+      img.alt = "Video";
+      if (media.w && media.h) img.style.aspectRatio = media.w + " / " + media.h;
+      whenSeen(img, () => mediaUrl(preview, "image/jpeg").then(u => { img.src = u; }).catch(() => {}));
+      box.appendChild(img);
+      const badge = el("div", "play");
+      badge.appendChild(icon("i-play"));
+      box.appendChild(badge);
+      box.addEventListener("click", () => original ? openOriginal(original, media) : openLightbox(preview, media, "Too big for the inbox, so it stayed on the relay phone, in Messages."));
+      bubble.appendChild(box);
+      if (!original) bubble.appendChild(el("div", "attach", kind + (media.bytes ? " · " + fmtBytes(media.bytes) : "") + " · on the relay phone, in Messages"));
+      return;
+    }
     const tile = el("button", "attach-tile");
     tile.type = "button";
     tile.appendChild(icon(kind === "Video" ? "i-play" : "i-file"));
@@ -1516,7 +1678,7 @@
     bubble.appendChild(tile);
   }
 
-  async function openLightbox(path, media) {
+  async function openLightbox(path, media, note) {
     const box = $("lightbox");
     const img = $("lightbox-img");
     const cap = $("lightbox-cap");
@@ -1530,8 +1692,9 @@
       if (box.hidden) return;   // closed while it was loading
       mediaPinned.add(u);       // Save reads it again
       img.src = u;
-      cap.textContent = (media.w && media.h ? media.w + "×" + media.h : "Full size") + (media.bytes ? " · " + fmtBytes(media.bytes) : "");
-      wireSave(u, media);
+      cap.textContent = note ? mediaKind(media) + (media.bytes ? " · " + fmtBytes(media.bytes) : "") + " · " + note
+        : (media.w && media.h ? media.w + "×" + media.h : "Full size") + (media.bytes ? " · " + fmtBytes(media.bytes) : "");
+      if (note) { const link = $("lightbox-open"); link.textContent = ""; link.onclick = (e) => e.preventDefault(); } else wireSave(u, media);
     } catch (e) {
       cap.textContent = "Could not load the picture: " + e.message;
     }
@@ -1559,6 +1722,7 @@
     fillAvatar($("details-avatar"), c);
     $("details-name").textContent = c ? c.name : "Conversation";
     $("details-sub").textContent = c && c.group ? "Group conversation" : "";
+    renderDetailsFilter(conv);
     show("details");
     selectTab(state.detailsTab);
     $("details-status").textContent = state.complete.has(conv) ? "" : "Loading the whole conversation…";
@@ -1647,6 +1811,25 @@
   /** The most a file sent from here can be: what the inbox takes by a ticket (inbox2.js TICKET_MAX, less a margin). */
   const ATTACH_MAX = 25 * 1024 * 1024 - 4096;
   const PREVIEW_FROM_BYTES = 300 * 1024, PREVIEW_FROM_SIDE = 1280, PREVIEW_SIDE = 960;
+  /** A picture on its way out as MMS is shrunk to this before it's sealed (the relay phone shrinks it again to the carrier's limits). */
+  const SEND_SIDE = 1600, SEND_QUALITY = 0.85, SEND_WHOLE_BELOW = 600 * 1024;
+
+  const isPicture = (mime) => mime.startsWith("image/") && mime !== "image/gif";
+  /** The most a video or file sent from here can be: an MMS from the relay phone carries this much; 0 while unknown. */
+  const mmsMax = () => (state.relay && Number.isFinite(state.relay.mmsMax) && state.relay.mmsMax > 0) ? state.relay.mmsMax : 0;
+  /** True while a picture from here goes through Messages on the relay phone as it is, rather than as a shrunken MMS. */
+  const pictureGoesWhole = () => !!(state.relay && state.relay.imageReply === true);
+
+  /** Why a file can't be sent from here, in a sentence, or null when it can (a picture always can: it's shrunk to fit). */
+  function cantSend(mime, bytes) {
+    if (isPicture(mime)) return null;
+    const max = mmsMax();
+    if (max > 0 && bytes > max) {
+      return (mime.startsWith("video/") ? "Videos" : mime === "image/gif" ? "GIFs" : "Files") + " go out as MMS from the relay phone, which takes up to " + fmtBytes(max) + " there. This one is " + fmtBytes(bytes) + ".";
+    }
+    if (bytes > ATTACH_MAX) return "That file is too big to send (25 MB at most).";
+    return null;
+  }
 
   async function sendMessage() {
     const input = $("msg-input");
@@ -1665,57 +1848,137 @@
   }
 
   /** Sends words, a file, or both, to `conv`; drawn at once as sending, then as what became of it. */
-  async function sendText(conv, text, att) {
-    const now = Date.now();
-    const temp = { k: "tmp:" + now + ":" + Math.random().toString(36).slice(2, 8), conv, dir: "out", status: "queued", text, ts: now };
-    if (att) temp.media = { mime: att.mime, bytes: att.bytes, local: att.url, name: att.name };
-    (state.msgs.get(conv) || state.msgs.set(conv, []).get(conv)).push(temp);
+  /** How many times a text goes out by itself when the inbox can't be reached, before it waits for a tap. */
+  const SEND_TRIES = 3;
+
+  async function sendText(conv, text, att, again) {
+    const now = again ? again.ts : Date.now();
+    // The row's id is the message's id for the inbox too: sent again after a lost answer, it's the same message.
+    const temp = again || { k: "tmp:" + now + ":" + Math.random().toString(36).slice(2, 8), conv, dir: "out", status: "queued", text, ts: now, temp: true, tries: 0 };
+    temp.cid = temp.k;
+    temp.status = "queued";
+    temp.code = "";
+    temp.tries = (temp.tries || 0) + 1;
+    if (att && !temp.media) temp.media = { mime: att.mime, bytes: att.bytes, local: att.url, name: att.name };
+    const held = state.msgs.get(conv) || state.msgs.set(conv, []).get(conv);
+    if (!held.includes(temp)) held.push(temp);
     renderThread(conv, true);
     try {
-      const body = { conv, text, ts: now };
+      const body = { conv, text, ts: now, cid: temp.k };
       const started = state.started.get(conv);
       if (started) { body.to = started.number; body.name = started.name; }
       if (att) {
         if (!state.link) throw Object.assign(new Error("Attachments need a private inbox."), { code: "local" });
-        body.attachment = await storeAttachment(conv, now, att);
+        if (!temp.stored) temp.stored = await storeAttachment(conv, now, att);
+        body.attachment = temp.stored;
         temp.media.w = body.attachment.w;
         temp.media.h = body.attachment.h;
         temp.media.path = body.attachment.path;
         if (body.attachment.preview) temp.media.preview = body.attachment.preview;
+        temp.seal = "m:out:" + TR2.stemOf(now, body.attachment.fp);
+      } else if (state.link) {
+        // Sealed once, up front: the inbox's copy will name itself by these bytes, so the two are one row.
+        if (!temp.sealed) temp.sealed = await TR2.sealJson(state.keys.enc, { text, ts: now }, TR2.AAD.message(conv, "out"));
+        body.sealed = temp.sealed;
+        temp.seal = "e:" + temp.sealed.slice(-22);
       }
-      const r = await api("/api/send", { method: "POST", body });
+      temp.att = att;
+      let r = null;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          r = await api("/api/send", { method: "POST", body });
+          break;
+        } catch (e) {
+          // The same request again, at once, for a connection that dropped; the inbox knows it by its id.
+          if (!e.network || attempt >= 2) throw e;
+          await sleep(1500 * (attempt + 1));
+        }
+      }
       const arr = state.msgs.get(conv) || [];
       const at = arr.indexOf(temp);
+      if (at < 0) return;   // the inbox's copy took the row's place meanwhile
       if (arr.some(x => x.k === r.id)) { if (at >= 0) arr.splice(at, 1); }   // a sync already brought it
-      else temp.k = r.id;
-      state.pendingOut.add(r.id);
+      else { temp.k = r.id; temp.temp = false; if (r.again && r.status) temp.status = r.status; }
+      if (temp.status === "queued") state.pendingOut.set(r.id, conv);
       state.unsent.delete(conv);   // the inbox has the conversation now
       const c = state.convs.get(conv);
       if (c) { c.lastTs = temp.ts; c.lastText = text || (att ? mediaKind(att) : ""); c.lastDir = "out"; renderInbox(); }
       if (r.canReply === false && state.current === conv && ((c && c.group) || !smsFallbackOn())) toast("Queued. It goes out after their next text reaches the relay phone.", 4000);
       if (state.current === conv) renderThread(conv, true);
     } catch (e) {
+      const arr = state.msgs.get(conv) || [];
+      if (!arr.includes(temp)) return;   // the inbox's copy took the row's place: it got there after all
       temp.status = "failed";
-      temp.code = e && e.code === "too_big" ? "too_big_here" : "local";
+      temp.code = e && e.code === "too_big" ? "too_big_here" : e && e.network ? "offline" : e && e.auth ? "local" : e && e.code ? e.code : "refused";
       if (state.current === conv) renderThread(conv, true);
       if (e.auth) unlinkedHere(e.message);
     }
   }
 
+  /** True while a failed row of this device's own is one that goes again by itself once the inbox answers. */
+  const waitsForConnection = (m) => !!(m && m.temp && m.status === "failed" && m.code === "offline" && (m.tries || 0) < SEND_TRIES);
+
+  /** Rows that couldn't reach the inbox, sent again now that it answers (each the same message, by its id). */
+  function retryWaiting() {
+    for (const [conv, arr] of state.msgs) for (const m of arr.slice()) if (waitsForConnection(m)) sendText(conv, m.text, m.att || null, m);
+  }
+
   /** Seals the file (and a small preview of a big picture) and stores it in the inbox; returns what the message names. */
   async function storeAttachment(conv, ts, att) {
-    const plain = new Uint8Array(await att.file.arrayBuffer());
+    let plain = new Uint8Array(await att.file.arrayBuffer());
+    let mime = att.mime;
+    let size = { w: 0, h: 0 };
+    if (isPicture(mime)) {
+      // A picture is shrunk when the way out would shrink it anyway, or when it's too big for the inbox as it is.
+      if (plain.length > ATTACH_MAX || (!pictureGoesWhole() && plain.length > SEND_WHOLE_BELOW)) {
+        const small = await shrink(att.file, SEND_SIDE, SEND_QUALITY);
+        if (small && small.length < plain.length) { plain = small; mime = "image/jpeg"; }
+      }
+      size = await imageSize(new Blob([plain], { type: mime }));
+    }
     if (plain.length > ATTACH_MAX) throw Object.assign(new Error("too big"), { code: "too_big" });
     // Its files are named by a fingerprint this device makes up, as the relay phone names its own.
     const fp = await TR2.fpId(state.keys, TR2.b64u(TR2.random(8)).replace(/[^A-Za-z0-9]/g, "").toLowerCase());
-    const size = att.mime.startsWith("image/") ? await imageSize(att.file) : { w: 0, h: 0 };
-    const out = { fp, mime: att.mime, bytes: plain.length, name: att.name, w: size.w, h: size.h };
+    const out = { fp, mime, bytes: plain.length, name: att.name, w: size.w, h: size.h };
     out.path = await storeFile(conv, fp, ts, "original", plain);
-    if (att.mime.startsWith("image/") && att.mime !== "image/gif" && (plain.length > PREVIEW_FROM_BYTES || size.w > PREVIEW_FROM_SIDE || size.h > PREVIEW_FROM_SIDE)) {
-      const small = await shrink(att.file, PREVIEW_SIDE, 0.8);
+    if (isPicture(mime) && (plain.length > PREVIEW_FROM_BYTES || size.w > PREVIEW_FROM_SIDE || size.h > PREVIEW_FROM_SIDE)) {
+      const small = await shrink(new Blob([plain], { type: mime }), PREVIEW_SIDE, 0.8);
       if (small && small.length < plain.length) out.preview = await storeFile(conv, fp, ts, "preview", small);
+    } else if (mime.startsWith("video/")) {
+      // A frame of the video as its preview, so every device shows a picture of it (as the relay phone does).
+      const poster = await videoPoster(att.file, PREVIEW_SIDE);
+      if (poster) {
+        out.preview = await storeFile(conv, fp, ts, "preview", poster.jpeg);
+        out.w = poster.w; out.h = poster.h;
+      }
     }
     return out;
+  }
+
+  /** A frame from near the start of a video, as a JPEG; null when the browser can't play it. */
+  function videoPoster(file, maxSide) {
+    return new Promise(resolve => {
+      const url = URL.createObjectURL(file);
+      const v = document.createElement("video");
+      v.muted = true; v.playsInline = true; v.preload = "auto";
+      const done = (r) => { URL.revokeObjectURL(url); v.removeAttribute("src"); resolve(r); };
+      const timer = setTimeout(() => done(null), 8000);
+      v.onerror = () => { clearTimeout(timer); done(null); };
+      v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 0) / 4); };
+      v.onseeked = async () => {
+        clearTimeout(timer);
+        try {
+          const k = Math.min(1, maxSide / Math.max(v.videoWidth, v.videoHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(v.videoWidth * k));
+          canvas.height = Math.max(1, Math.round(v.videoHeight * k));
+          canvas.getContext("2d").drawImage(v, 0, 0, canvas.width, canvas.height);
+          const blob = await new Promise(r => canvas.toBlob(r, "image/jpeg", 0.8));
+          done(blob ? { jpeg: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height } : null);
+        } catch { done(null); }
+      };
+      v.src = url;
+    });
   }
 
   /** One sealed file into the inbox: straight in when small, by an upload ticket when not. */
@@ -1787,11 +2050,12 @@
       $("composer").classList.toggle("empty", !$("msg-input").value.trim());
       return;
     }
-    if (file.size > ATTACH_MAX) {
-      toast("That file is too big to send (25 MB at most).", 4000);
+    const mime = mimeOf(file);
+    const cant = cantSend(mime, file.size);
+    if (cant) {
+      toast(cant, 5000);
       return;
     }
-    const mime = mimeOf(file);
     const url = URL.createObjectURL(file);
     state.attachment = { file, mime, name: file.name || "file", bytes: file.size, url };
     bar.hidden = false;
@@ -1819,6 +2083,17 @@
     if (arr) {
       const i = arr.findIndex(x => x.k === m.k);
       if (i < 0) {
+        // A row written on this device, as the inbox has it (by the id this device gave it, or by its seal): the
+        // inbox's copy takes the row's place, with the file this device still shows for it.
+        const own = arr.findIndex(x => x.temp && ((m.cid && m.cid === x.k) || (m.seal && m.seal === x.seal)));
+        if (own >= 0) {
+          const was = arr[own];
+          if (m.media && was.media && was.media.local) m.media.local = was.media.local;
+          arr.splice(own, 1, m);
+          arr.sort(byTime);
+          if (m.dir === "out" && m.status !== "queued") state.pendingOut.delete(m.k);
+          return "updated";
+        }
         // The same sealed message again, under another key: shown once (the copy that opens, if one of them doesn't).
         const twin = m.seal ? arr.findIndex(x => x.seal === m.seal) : -1;
         if (twin >= 0) {
@@ -1829,6 +2104,9 @@
         arr.sort(byTime);
         changed = "added";
       } else if (!(arr[i].status !== "queued" && m.status === "queued") && JSON.stringify(arr[i]) !== JSON.stringify(m)) {
+        // The same key filed as someone's text and as this device's (one copy from the thread, one from the feed, by
+        // a server that changed its mind about who said it): nobody's words here, either way round.
+        if (arr[i].dir !== m.dir && !arr[i].temp) m = asUnchecked(m);
         arr[i] = m;   // a sent or failed status never goes back to queued
         // What the server put under this key may be another message's copy: still each message once, in time order.
         const tidied = tidy(arr);
@@ -1843,35 +2121,41 @@
       changed = changed || "added";
     }
     if (m.dir === "out" && m.status !== "queued") state.pendingOut.delete(m.k);
-    if (changed === "added" && m.dir === "in" && !m.read && state.current === m.conv && state.view === "thread") {
-      api("/api/read", { method: "POST", body: { conv: m.conv } }).catch(() => {});
+    if (changed === "added" && m.dir === "in" && !m.read && reading(m.conv)) {
+      markRead(m.conv);
     }
     return changed;
   }
 
-  const SUMMARY_FIELDS = ["name", "group", "lastTs", "lastText", "lastDir", "lastSender", "unread", "canReply", "aliasKey"];
+  const SUMMARY_FIELDS = ["name", "group", "lastTs", "lastText", "lastDir", "lastSender", "unread", "canReply", "aliasKey", "filtered", "filteredBy"];
+
+  /** True while `conv` is being read: open as a thread, or its details (photos, files, links) over the thread. */
+  const reading = (conv) => !!conv && state.current === conv && (state.view === "thread" || state.view === "details");
 
   /** The server's summary of a conversation wins, unread count included. The open conversation reads as read. */
   function mergeConversation(c) {
     if (!c || !c.conv) return false;
     const next = Object.assign({}, c);
-    if (state.current === c.conv && state.view === "thread") next.unread = 0;
+    if (reading(c.conv)) next.unread = 0;
     state.unsent.delete(c.conv);
     const cur = state.convs.get(c.conv);
     if (cur && SUMMARY_FIELDS.every(f => cur[f] === next[f])) return false;
+    if (cur && cur.unread > 0 && !next.unread) closeNotifications(c.conv);   // read on another device, or here
     state.convs.set(c.conv, next);
     return true;
   }
 
   async function sync() {
-    if (state.syncing || !linked() || document.visibilityState !== "visible") return;
+    if (!linked() || document.visibilityState !== "visible") return;
+    if (state.syncing) { state.ringPending = true; return; }   // a ring during a sync: another follows at once
     state.syncing = true;
+    let ok = false;
     try {
       if (!state.loadedInbox) await loadInbox();
       if (!state.feed) return;
       // Arrival order, not message time: a text that reaches the server late (the relay device was offline,
       // or sent everything again) still shows up here.
-      let touched = false;
+      let touched = false, touchedOpen = false;
       let reopen = null;
       for (let round = 0; round < 10; round++) {
         const data = await api("/api/sync?feed=" + encodeURIComponent(state.feed));
@@ -1889,8 +2173,8 @@
           touched = true;
           break;
         }
-        for (const m of data.items || []) if (mergeMessage(m)) touched = true;
-        for (const c of data.convs || []) if (mergeConversation(c)) touched = true;
+        for (const m of data.items || []) if (mergeMessage(m)) { touched = true; if (m.conv === state.current) touchedOpen = true; }
+        for (const c of data.convs || []) if (mergeConversation(c)) { touched = true; if (c.conv === state.current) touchedOpen = true; }
         // Filled in by a full-history sync: what's held here for those conversations is out of date.
         for (const conv of data.reload || []) {
           if (conv === state.current && (state.view === "thread" || state.view === "details")) reopen = conv;
@@ -1898,28 +2182,56 @@
         }
         if (data.cursor) state.feed = data.cursor;
         state.relay = data.relay;
+        if (Number.isFinite(data.serverTime)) state.clockSkew = data.serverTime - Date.now();
         if (!data.more) break;
       }
       relayStrip();
       if (state.view === "settings") renderRelaySettings();
-      if (touched) {
-        renderInbox();
-        if (state.current && state.view === "thread" && !state.find.open) renderThread(state.current, false);
-      }
+      if (touched) renderInbox();
+      if (touchedOpen && state.current && state.view === "thread" && !state.find.open) renderThread(state.current, false);
       if (reopen) await reloadThread(reopen);
-      if (state.pendingOut.size && state.current) await refreshPending();
+      // A reply of this device's still waiting for its result, in the open conversation: its newest state, now and
+      // then (the log brings the result itself; this is insurance).
+      const waiting = [...state.pendingOut.values()].includes(state.current);
+      if (waiting && Date.now() - (state.pendingCheckedAt || 0) > 30000) { state.pendingCheckedAt = Date.now(); await refreshPending(); }
+      ok = true;
     } catch (e) {
       if (e.auth) unlinkedHere(e.message);
     } finally {
       state.syncing = false;
     }
+    if (ok) {
+      settleReads();
+      retryWaiting();   // the inbox answers: what couldn't reach it goes now
+      if (state.pageNeeded && state.pageNeeded === state.current) openThread(state.current);
+    }
+    if (state.ringPending) { state.ringPending = false; sync(); }
   }
 
   /** Reloads the newest page of a conversation in place, keeping the reader where they are. */
+  /**
+   * A page from the inbox in place of what's held: rows written on this device that the inbox doesn't have yet stay,
+   * and a message that arrived while the page was on its way too.
+   */
+  function withOwn(conv, page, hadBefore) {
+    const old = state.msgs.get(conv);
+    if (!old || !old.length) return tidy(page);
+    const keys = new Set(page.map(m => m.k)), seals = new Set(page.map(m => m.seal).filter(Boolean)), cids = new Set(page.map(m => m.cid).filter(Boolean));
+    const all = page.slice();
+    for (const m of old) {
+      if (keys.has(m.k)) continue;
+      const own = m.temp && !cids.has(m.k) && !(m.seal && seals.has(m.seal));
+      const arrived = !m.temp && hadBefore && !hadBefore.has(m.k);
+      if (own || arrived) all.push(m);
+    }
+    return tidy(all);
+  }
+
   async function reloadThread(conv) {
+    const had = new Set((state.msgs.get(conv) || []).map(m => m.k));
     const data = await api("/api/thread?conv=" + encodeURIComponent(conv));
     if (state.current !== conv) return;
-    state.msgs.set(conv, tidy(data.items));
+    state.msgs.set(conv, withOwn(conv, data.items, had));
     state.cursors.set(conv, data.cursor);
     if (!data.cursor) state.complete.add(conv); else state.complete.delete(conv);
     if (data.conversation) mergeConversation(data.conversation);
@@ -1955,7 +2267,11 @@
 
   /** Throws away everything held here and reloads every conversation; the open one reloads too. */
   async function reloadEverything() {
-    state.convs.clear(); state.msgs.clear(); state.cursors.clear(); state.complete.clear();
+    // Rows written here that the inbox doesn't have yet stay, under their conversations.
+    const own = new Map();
+    for (const [conv, arr] of state.msgs) { const keep = arr.filter(m => m.temp); if (keep.length) own.set(conv, keep); }
+    state.convs.clear(); state.msgs.clear(); state.cursors.clear(); state.complete.clear(); state.pendingOut.clear();
+    for (const [conv, keep] of own) state.msgs.set(conv, keep);
     state.feed = null; state.epoch = null; state.loadedInbox = false;
     await loadInbox();
     if (state.current && (state.view === "thread" || state.view === "details")) {
@@ -2985,6 +3301,7 @@
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible" && linked()) startSync(); else stopSync();
       if (document.visibilityState === "visible" && state.view === "settings") renderPushState();   // back from Android's settings
+      tellWorkerWhatIsOpen();
     });
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("message", e => {

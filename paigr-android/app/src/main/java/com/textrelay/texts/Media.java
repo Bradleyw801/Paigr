@@ -29,7 +29,10 @@ import java.util.concurrent.Executors;
  * disk still sealed, so a picture seen once doesn't download again; decoded pictures stay in memory while there's room.
  */
 final class Media {
-    private static final long MAX_BYTES = 64L * 1024 * 1024;
+    /** The most this phone reads of any file: a picture to shrink, or an attachment to open. */
+    static final long MAX_BYTES = 64L * 1024 * 1024;
+    /** A poster frame's longest side. */
+    private static final int POSTER_SIDE = 960;
 
     interface Got<T> {
         void got(T value);
@@ -92,8 +95,8 @@ final class Media {
             Bitmap b = null;
             try {
                 b = decode(open(at, path), width);
-            } catch (IOException | RuntimeException | java.security.GeneralSecurityException ignored) {
-                b = null;
+            } catch (IOException | RuntimeException | java.security.GeneralSecurityException | OutOfMemoryError ignored) {
+                b = null;   // a picture that won't fit in memory is no picture here; the app stays up
             }
             Bitmap got = b;
             main.post(() -> {
@@ -120,7 +123,7 @@ final class Media {
             Bitmap b = null;
             try {
                 b = decode(readLocal(android.net.Uri.parse(uri), 24L * 1024 * 1024), width);
-            } catch (IOException | RuntimeException ignored) {
+            } catch (IOException | RuntimeException | OutOfMemoryError ignored) {
                 b = null;
             }
             Bitmap got = b;
@@ -129,6 +132,49 @@ final class Media {
                 then.got(got);
             });
         });
+    }
+
+    /** A frame of a video on this phone, as a JPEG: the picture a thread shows for it. */
+    static final class Poster {
+        final byte[] jpeg;
+        final int w, h;
+
+        Poster(byte[] jpeg, int w, int h) {
+            this.jpeg = jpeg;
+            this.w = w;
+            this.h = h;
+        }
+    }
+
+    /** A frame from near the start of a video on this phone (upright, POSTER_SIDE on its longest side); null when it can't be read. */
+    Poster poster(android.net.Uri uri) {
+        android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+        Bitmap frame = null;
+        try {
+            r.setDataSource(inbox.app, uri);
+            String d = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            long duration = d == null ? 0 : Long.parseLong(d);
+            long at = Math.min(1_000_000L, duration * 1000 / 4);
+            frame = r.getFrameAtTime(at, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            if (frame == null) frame = r.getFrameAtTime();
+            if (frame == null) return null;
+            float scale = Math.min(1f, (float) POSTER_SIDE / Math.max(frame.getWidth(), frame.getHeight()));
+            Bitmap out = scale < 1f ? Bitmap.createScaledBitmap(frame, Math.max(1, Math.round(frame.getWidth() * scale)), Math.max(1, Math.round(frame.getHeight() * scale)), true) : frame;
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            out.compress(Bitmap.CompressFormat.JPEG, 80, buf);
+            Poster p = new Poster(buf.toByteArray(), out.getWidth(), out.getHeight());
+            if (out != frame) out.recycle();
+            return p.jpeg.length > 0 ? p : null;
+        } catch (RuntimeException | OutOfMemoryError e) {
+            return null;
+        } finally {
+            if (frame != null) frame.recycle();
+            try {
+                r.release();
+            } catch (RuntimeException | IOException ignored) {
+                // released as far as it goes
+            }
+        }
     }
 
     /** The bytes of a file on this phone, up to `max`; an IOException past that. */
@@ -214,7 +260,7 @@ final class Media {
             byte[] b;
             try {
                 b = open(at, path);
-            } catch (IOException | RuntimeException | java.security.GeneralSecurityException e) {
+            } catch (IOException | RuntimeException | java.security.GeneralSecurityException | OutOfMemoryError e) {
                 b = null;
             }
             byte[] got = b;
@@ -354,6 +400,13 @@ final class Media {
         }
     }
 
+    /**
+     * No decoded picture has a side longer than this (about 40 MB of pixels at the most): a 48-megapixel photo decoded
+     * whole on a small phone's heap would take the app down. Wide enough that a picture sent out at SEND_SIDE is still
+     * scaled down from more pixels than it keeps.
+     */
+    static final int DECODE_SIDE_MAX = 3200;
+
     /** A picture's bytes as a bitmap about `width` pixels wide (never wider than it is), turned the way it was taken. */
     static Bitmap decode(byte[] bytes, int width) {
         if (bytes == null) return null;
@@ -362,8 +415,9 @@ final class Media {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
         int sample = 1;
-        int target = Math.max(64, width);
+        int target = Math.max(64, Math.min(width, DECODE_SIDE_MAX));
         while (bounds.outWidth / (sample * 2) >= target && bounds.outHeight / (sample * 2) >= 64) sample *= 2;
+        while (Math.max(bounds.outWidth, bounds.outHeight) / sample > DECODE_SIDE_MAX) sample *= 2;
         BitmapFactory.Options o = new BitmapFactory.Options();
         o.inSampleSize = sample;
         Bitmap b = BitmapFactory.decodeByteArray(bytes, 0, bytes.length, o);

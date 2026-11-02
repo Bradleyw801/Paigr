@@ -335,6 +335,40 @@ final class Prefs {
         sp.edit().putString("started2", o.toString()).apply();
     }
 
+    /** Messages the inbox has as failed that were sent again from here (the newest 200): their rows offer no second retry. */
+    java.util.List<String> retried() {
+        String s = sp.getString("retried", "");
+        return s.isEmpty() ? new java.util.ArrayList<>() : new java.util.ArrayList<>(java.util.Arrays.asList(s.split("\t")));
+    }
+
+    void rememberRetried(String key) {
+        java.util.List<String> list = retried();
+        list.remove(key);
+        list.add(key);
+        while (list.size() > 200) list.remove(0);
+        sp.edit().putString("retried", String.join("\t", list)).apply();
+    }
+
+    /** Conversations read here that the inbox wasn't told of yet (the call failed). */
+    java.util.Set<String> readsOwed() {
+        String s = sp.getString("reads_owed", "");
+        return s.isEmpty() ? new java.util.HashSet<>() : new java.util.HashSet<>(java.util.Arrays.asList(s.split("\t")));
+    }
+
+    void rememberReadsOwed(java.util.Set<String> convs) {
+        sp.edit().putString("reads_owed", String.join("\t", convs)).apply();
+    }
+
+    /** What was typed in a conversation and not sent, kept across a restart (or a switch to dark). */
+    String draft(String conv) {
+        return sp.getString("draft:" + conv, "");
+    }
+
+    void setDraft(String conv, String text) {
+        if (text == null || text.isEmpty()) sp.edit().remove("draft:" + conv).apply();
+        else sp.edit().putString("draft:" + conv, text).apply();
+    }
+
     /** "Connect through Tor" (see Tor). Always on while this phone's inbox is on a .onion server. */
     boolean tor() {
         return sp.getBoolean(Tor.PREF, false) || onionServer();

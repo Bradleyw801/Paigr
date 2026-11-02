@@ -65,13 +65,21 @@ final class Media {
     }
 
     static final class Prepared {
+        /** Null when the file is too big for the inbox: only its preview and size go up, and it stays on this phone. */
         final Blob original;
-        /** Null when the original is its own preview, or isn't a picture. */
+        /** Null when the original is its own preview, or isn't a picture or a video. */
         final Blob preview;
+        /** The file's size, stored or not. */
+        final long bytes;
 
         Prepared(Blob original, Blob preview) {
+            this(original, preview, original != null ? original.bytes.length : 0);
+        }
+
+        Prepared(Blob original, Blob preview, long bytes) {
             this.original = original;
             this.preview = preview;
+            this.bytes = bytes;
         }
     }
 
@@ -80,9 +88,69 @@ final class Media {
         Prepared read(Uri uri, String mime) throws IOException;
     }
 
+    /**
+     * Reads the file whole and prepares it. A video gets a poster frame as its preview, so threads show a picture of it
+     * instead of a plain tile. One too big for the inbox still gets its preview and size up: the thread shows what it
+     * is, and that it's on this phone.
+     */
     static Reader reader(Context context) {
         ContentResolver resolver = context.getContentResolver();
-        return (uri, mime) -> prepare(readAll(resolver, uri), mime);
+        return (uri, mime) -> {
+            String type = normalize(mime);
+            byte[] bytes;
+            try {
+                bytes = readAll(resolver, uri);
+            } catch (TooBig big) {
+                return new Prepared(null, type.startsWith("video/") ? poster(context, uri) : null, big.bytes);
+            }
+            Prepared p = prepare(bytes, mime);
+            if (p.preview == null && p.original != null && p.original.mime.startsWith("video/")) {
+                Blob poster = poster(context, uri);
+                if (poster != null) return new Prepared(new Blob(p.original.bytes, p.original.mime, poster.w, poster.h), poster);
+            }
+            return p;
+        };
+    }
+
+    /** A frame from near the start of a video, as a JPEG preview (upright, PREVIEW_EDGE on its longest side); null when it can't be read. */
+    static Blob poster(Context context, Uri uri) {
+        android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+        Bitmap frame = null;
+        try {
+            r.setDataSource(context, uri);
+            String d = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            long duration = d == null ? 0 : Long.parseLong(d);
+            long at = Math.min(1_000_000L, duration * 1000 / 4);   // a quarter in, up to a second: past any black lead-in
+            frame = r.getFrameAtTime(at, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC);
+            if (frame == null) frame = r.getFrameAtTime();
+            if (frame == null) return null;
+            float scale = Math.min(1f, (float) PREVIEW_EDGE / Math.max(frame.getWidth(), frame.getHeight()));
+            Bitmap out = scale < 1f ? Bitmap.createScaledBitmap(frame, Math.max(1, Math.round(frame.getWidth() * scale)), Math.max(1, Math.round(frame.getHeight() * scale)), true) : frame;
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            out.compress(Bitmap.CompressFormat.JPEG, PREVIEW_QUALITY, buf);
+            Blob preview = new Blob(buf.toByteArray(), "image/jpeg", out.getWidth(), out.getHeight());
+            if (out != frame) out.recycle();
+            return preview.bytes.length > 0 ? preview : null;
+        } catch (RuntimeException | OutOfMemoryError e) {
+            return null;
+        } finally {
+            if (frame != null) frame.recycle();
+            try {
+                r.release();
+            } catch (RuntimeException | IOException ignored) {
+                // released as far as it goes
+            }
+        }
+    }
+
+    /** A file the inbox can't keep whole, with how big it is. */
+    static final class TooBig extends IOException {
+        final long bytes;
+
+        TooBig(long bytes) {
+            super("attachment larger than " + MAX_BYTES + " bytes");
+            this.bytes = bytes;
+        }
     }
 
     /**
@@ -91,7 +159,7 @@ final class Media {
      */
     static Prepared prepare(byte[] bytes, String mime) throws IOException {
         if (bytes == null || bytes.length == 0) throw new IOException("empty attachment");
-        if (bytes.length > MAX_BYTES) throw new IOException("attachment larger than " + MAX_BYTES + " bytes");
+        if (bytes.length > MAX_BYTES) throw new TooBig(bytes.length);
         String type = normalize(mime);
         if (TO_JPEG.contains(type)) {
             Blob jpeg = toJpeg(bytes);
@@ -264,7 +332,13 @@ final class Media {
             int n;
             while ((n = is.read(buf)) > 0) {
                 out.write(buf, 0, n);
-                if (out.size() > MAX_BYTES) throw new IOException("attachment larger than " + MAX_BYTES + " bytes");
+                if (out.size() > MAX_BYTES) {
+                    // Too big to keep: only how big it is matters now, so the rest is counted, not kept.
+                    long total = out.size();
+                    out = null;
+                    while ((n = is.read(buf)) > 0) total += n;
+                    throw new TooBig(total);
+                }
             }
             return out.toByteArray();
         }

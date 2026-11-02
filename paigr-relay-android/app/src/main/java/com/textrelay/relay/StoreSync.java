@@ -32,9 +32,15 @@ final class StoreSync {
     static final long DAYS_7 = 7 * 86_400_000L;
     static final long DEEP_EVERY_MS = 15 * 60_000L;
     static final long DEBOUNCE_MS = 3_000L;
-    /** A text in a thread not seen before waits this long for its notification to say which conversation it is. */
-    static final long SETTLE_MS = 2 * 60_000L;
+    /** A text in a thread not seen before waits this long for its notification to say which conversation it is (tests shorten it). */
+    static volatile long SETTLE_MS = 2 * 60_000L;
+    static final long SETTLE_DEFAULT_MS = 2 * 60_000L;
+    /** A text is taken for one Messages kept quiet only while Messages' notifications are known to reach this app. */
+    static final long NOTIFIED_WITHIN_MS = 24 * 3600_000L;
     private static final String TAG = "StoreSync";
+
+    /** What Messages did with a text that reached the store (quietness). */
+    static final int UNKNOWN = 0, NOTIFIED = 1, QUIET = 2, HOLD = 3;
 
     private final Context context;
     private final Relay relay;
@@ -54,6 +60,10 @@ final class StoreSync {
     volatile long lastDeep;
     volatile int lastFound;
     volatile String lastError;
+    /** Incoming texts first found within the settle window: when, and whether the phone was in use or the text read then. */
+    private final java.util.LinkedHashMap<String, long[]> firstSeen = new java.util.LinkedHashMap<>();
+    /** Tests only: the screen's state, when they say. */
+    volatile Boolean interactiveForTests;
 
     StoreSync(Context context, Relay relay, Store store) {
         this.context = context.getApplicationContext();
@@ -161,6 +171,40 @@ final class StoreSync {
     }
 
     /**
+     * What Messages did with an incoming text that reached the store. Messages keeps its spam folder to itself: a text
+     * it files there posts no notification but still lands in the store. So a text with no notification for it is
+     * QUIET when that is Messages' doing for certain: the listener was up the whole time and Messages' notifications
+     * have been reaching it, nothing was hidden from it around then, the phone wasn't in use when the text landed (a
+     * conversation open on screen posts none either) and nobody has read it, and it has words to match a notification
+     * by. Within the settle window it is HOLD, since the notification may still be coming. Anything else is UNKNOWN,
+     * and goes up as any store text does.
+     */
+    int quietness(Store.Msg m, long now) {
+        if (m.out || m.text == null || m.text.isEmpty()) return UNKNOWN;
+        if (relay.hiddenNear(m.ts)) return NOTIFIED;
+        if (!relay.prefs.recentlyShowing(false, m.ts, m.text).isEmpty()) return NOTIFIED;
+        long[] first = firstSeen.get(m.key());
+        if (first == null) {
+            if (now - m.ts >= SETTLE_MS) return UNKNOWN;   // found late: no telling what Messages did with it
+            first = new long[] { now, interactive() ? 1 : 0, m.read ? 1 : 0 };
+            firstSeen.put(m.key(), first);
+            while (firstSeen.size() > 200) firstSeen.remove(firstSeen.keySet().iterator().next());
+        }
+        if (first[1] == 1 || first[2] == 1 || m.read) return UNKNOWN;
+        if (!relay.listening || relay.listenerSince == 0 || m.ts < relay.listenerSince + 2_000) return UNKNOWN;
+        if (now - relay.lastNotified > NOTIFIED_WITHIN_MS) return UNKNOWN;
+        if (now - m.ts < SETTLE_MS) return HOLD;
+        return QUIET;
+    }
+
+    private boolean interactive() {
+        Boolean said = interactiveForTests;
+        if (said != null) return said;
+        android.os.PowerManager pm = context.getSystemService(android.os.PowerManager.class);
+        return pm != null && pm.isInteractive();
+    }
+
+    /**
      * Reads the store and sends what the inbox may not have. New messages are queued (and only then remembered as
      * sent); with resend, messages sent before go straight to the inbox in batches, which keeps the queue small. A
      * problem partway through still sends what was read before it. Returns how many items were queued or re-sent.
@@ -194,8 +238,13 @@ final class StoreSync {
                     if (t == null) continue;
                     threads.put(t.id, t);
                     String conv = prefs.threadConv(t.id);
+                    int quietness = before || m.out ? UNKNOWN : quietness(m, now);   // first sight is noted here
                     if (conv == null && !m.out && now - m.ts < SETTLE_MS && !relay.hiddenNear(m.ts)) {
                         settling = true;   // its notification may be about to say whose thread this is
+                        continue;
+                    }
+                    if (quietness == HOLD) {
+                        settling = true;   // its notification may still be coming; without one, it's a text Messages kept quiet
                         continue;
                     }
                     if (conv == null) conv = relay.conversations.forThread(t, store, locator);
@@ -203,7 +252,8 @@ final class StoreSync {
                         settling = true;   // the inbox couldn't be asked just now
                         continue;
                     }
-                    List<JSONObject> its = relay.storeItems(m, conv, false, true);
+                    List<JSONObject> its = relay.storeItems(m, conv, false, true, quietness == QUIET);
+                    firstSeen.remove(m.key());
                     if (before) {
                         again.addAll(its);
                     } else {

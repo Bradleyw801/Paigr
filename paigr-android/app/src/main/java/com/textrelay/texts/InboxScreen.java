@@ -22,6 +22,7 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupWindow;
@@ -72,15 +73,7 @@ final class InboxScreen extends Screen {
         title.setSingleLine(true);
         // On a narrow screen the chip and three buttons leave the title little room: it shrinks before it wraps.
         title.setAutoSizeTextTypeUniformWithConfiguration(18, 27, 1, android.util.TypedValue.COMPLEX_UNIT_SP);
-        // BETA goes under the name: on a small phone there is no room beside it.
-        LinearLayout name = new LinearLayout(a);
-        name.setOrientation(LinearLayout.VERTICAL);
-        name.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        betaLp.topMargin = ui.dp(2);
-        betaLp.bottomMargin = ui.dp(2);
-        name.addView(ui.tag("BETA", Ui.BRAND.base), betaLp);
-        titleRow.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        titleRow.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         chip = new LinearLayout(a);
         chip.setGravity(Gravity.CENTER_VERTICAL);
@@ -197,6 +190,11 @@ final class InboxScreen extends Screen {
         list.setAdapter(adapter);
         list.setItemsCanFocus(false);
         list.setOnItemClickListener((p, v, pos, id) -> {
+            if (adapter.entry(pos) == FILTERED_HEAD) {
+                showFiltered = !showFiltered;
+                render();
+                return;
+            }
             Model.Conv c = adapter.getItem(pos);
             if (c == null) return;
             if (searchRow.getVisibility() == View.VISIBLE) hideKeyboard();
@@ -252,7 +250,7 @@ final class InboxScreen extends Screen {
 
     private int unreadConversations() {
         int n = 0;
-        for (Model.Conv c : inbox.convs.values()) if (c.unread > 0) n++;
+        for (Model.Conv c : inbox.convs.values()) if (c.unread > 0 && !c.filtered) n++;
         return n;
     }
 
@@ -283,10 +281,20 @@ final class InboxScreen extends Screen {
             inbox.markRead(c.conv, true);
         }));
         int n = unreadConversations();
-        if (n > (c.unread > 0 ? 1 : 0)) menu.addView(action(R.drawable.ic_done_all, "Mark all as read", true, () -> {
+        if (n > (c.unread > 0 && !c.filtered ? 1 : 0)) menu.addView(action(R.drawable.ic_done_all, "Mark all as read", true, () -> {
             pop.dismiss();
             inbox.markAllRead();
             a.say(n + " conversations marked read.", 2000);
+        }));
+        // Under Filtered (Messages' spam folder on the relay phone, or the owner's own filing), or back in the inbox.
+        menu.addView(action(c.filtered ? R.drawable.ic_sms : R.drawable.ic_eye, c.filtered ? "Move to the inbox" : "Move to Filtered", true, () -> {
+            pop.dismiss();
+            boolean to = !c.filtered;
+            inbox.setFiltered(c.conv, to, ok -> {
+                if (!ok) a.say(to ? "Couldn't move it to Filtered. Check the connection." : "Couldn't move it to the inbox. Check the connection.", 3000);
+                else a.say(to ? "Moved to Filtered." : "Moved to the inbox.", 2000);
+            });
+            if (to) showFiltered = true;
         }));
         pop.showAsDropDown(anchor, ui.dp(60), -anchor.getHeight() / 2);
         menu.getChildAt(0).requestFocus();
@@ -427,14 +435,34 @@ final class InboxScreen extends Screen {
         if (im != null) im.hideSoftInputFromWindow(search.getWindowToken(), 0);
     }
 
+    /** The row that stands for the Filtered section of the list. */
+    static final Object FILTERED_HEAD = new Object();
+    /** Whether the Filtered conversations are shown under their row. */
+    boolean showFiltered;
+
     private void render() {
         List<Model.Conv> items = inbox.list(filter);
-        adapter.set(items);
-        boolean none = items.isEmpty() && (inbox.loadedInbox || inbox.fromDisk || !filter.isEmpty());
+        // Filtered conversations (Messages' spam folder on the relay phone, and what the owner moved there) sit under
+        // their own row at the end, shown on request.
+        List<Object> rows = new ArrayList<>();
+        List<Model.Conv> filtered = new ArrayList<>();
+        for (Model.Conv c : items) {
+            if (c.filtered) filtered.add(c);
+            else rows.add(c);
+        }
+        if (!filtered.isEmpty()) {
+            rows.add(FILTERED_HEAD);
+            if (showFiltered) rows.addAll(filtered);
+        }
+        adapter.set(rows, filtered.size());
+        boolean none = items.isEmpty() && (inbox.loadedInbox || inbox.fromDisk || !filter.isEmpty() || inbox.unreached != null);
         empty.setVisibility(none ? View.VISIBLE : View.GONE);
         if (!filter.isEmpty()) {
             emptyTitle.setText("Nothing matches");
             emptySub.setText("No conversation has “" + filter + "” in its name or last message.");
+        } else if (!inbox.loadedInbox && !inbox.fromDisk && inbox.unreached != null) {
+            emptyTitle.setText("Can't reach the inbox");
+            emptySub.setText(inbox.unreached + " It keeps trying.");
         } else {
             emptyTitle.setText("No texts yet");
             emptySub.setText("New texts to your relay phone show up here.");
@@ -549,12 +577,15 @@ final class InboxScreen extends Screen {
                 time.setTypeface(ui.face(unread ? Ui.BLACK : Ui.BOLD));
                 badge.setVisibility(unread ? View.VISIBLE : View.GONE);
             }
-            time.setTextColor(unread ? (ui.dark ? Ui.blend(h.hi, Color.WHITE, 0.35f) : h.base) : ui.text3);
+            // Under Filtered, a row is quieter: no colour on its time or count.
+            time.setTextColor(unread && !c.filtered ? (ui.dark ? Ui.blend(h.hi, Color.WHITE, 0.35f) : h.base) : ui.text3);
+            name.setTextColor(c.filtered ? ui.text2 : ui.text);
             if (unread) {
                 badge.setText(c.unread > 99 ? "99+" : String.valueOf(c.unread));
-                if (badgeHue != h) {
-                    badgeHue = h;
-                    badge.setBackground(ui.rounded(h.base, 10));
+                Ui.Hue want = c.filtered ? null : h;
+                if (badgeHue != want || badgeHue == null) {
+                    badgeHue = want;
+                    badge.setBackground(ui.rounded(c.filtered ? ui.text3 : h.base, 10));
                 }
             }
             setContentDescription(c.name + (unread ? ", " + c.unread + " unread" : "") + ". " + snippet.getText());
@@ -562,11 +593,17 @@ final class InboxScreen extends Screen {
     }
 
     private final class Adapter extends BaseAdapter {
-        private List<Model.Conv> items = new ArrayList<>();
+        private List<Object> items = new ArrayList<>();
+        private int filteredCount;
 
-        void set(List<Model.Conv> next) {
+        void set(List<Object> next, int filteredCount) {
             items = next;
+            this.filteredCount = filteredCount;
             notifyDataSetChanged();
+        }
+
+        Object entry(int position) {
+            return position >= 0 && position < items.size() ? items.get(position) : null;
         }
 
         @Override
@@ -574,14 +611,17 @@ final class InboxScreen extends Screen {
             return items.size();
         }
 
+        /** The conversation at a position; null for the Filtered row. */
         @Override
         public Model.Conv getItem(int position) {
-            return position >= 0 && position < items.size() ? items.get(position) : null;
+            Object e = entry(position);
+            return e instanceof Model.Conv ? (Model.Conv) e : null;
         }
 
         @Override
         public long getItemId(int position) {
-            return items.get(position).conv.hashCode();
+            Object e = items.get(position);
+            return e == FILTERED_HEAD ? 1L : ((Model.Conv) e).conv.hashCode();
         }
 
         @Override
@@ -590,10 +630,60 @@ final class InboxScreen extends Screen {
         }
 
         @Override
+        public int getViewTypeCount() {
+            return 2;
+        }
+
+        @Override
+        public int getItemViewType(int position) {
+            return items.get(position) == FILTERED_HEAD ? 1 : 0;
+        }
+
+        @Override
         public View getView(int position, View convertView, ViewGroup parent) {
+            Object e = items.get(position);
+            if (e == FILTERED_HEAD) {
+                FilteredRow f = convertView instanceof FilteredRow ? (FilteredRow) convertView : new FilteredRow(parent.getContext());
+                f.bind(filteredCount, showFiltered);
+                return f;
+            }
             Row r = convertView instanceof Row ? (Row) convertView : new Row(parent.getContext());
-            r.bind(items.get(position));
+            r.bind((Model.Conv) e);
             return r;
+        }
+    }
+
+    /** The Filtered row: how many conversations are under it, and a chevron that says whether they're shown. */
+    final class FilteredRow extends LinearLayout {
+        private final ImageView chevron;
+        private final TextView count;
+
+        FilteredRow(Context c) {
+            super(c);
+            setOrientation(HORIZONTAL);
+            setGravity(Gravity.CENTER_VERTICAL);
+            setPadding(ui.dp(22), ui.dp(14), ui.dp(18), ui.dp(12));
+            setMinimumHeight(ui.dp(52));
+            chevron = new ImageView(c);
+            chevron.setImageResource(R.drawable.ic_chevron);
+            chevron.setImageTintList(android.content.res.ColorStateList.valueOf(ui.text2));
+            addView(chevron, new LinearLayout.LayoutParams(ui.dp(18), ui.dp(18)));
+            TextView label = ui.line("Filtered", 14f, Ui.HEAVY, ui.text2);
+            LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            llp.setMarginStart(ui.dp(10));
+            addView(label, llp);
+            count = ui.label("", 11.5f, Ui.HEAVY, ui.text2);
+            count.setGravity(Gravity.CENTER);
+            count.setMinWidth(ui.dp(20));
+            count.setPadding(ui.dp(7), 0, ui.dp(7), 0);
+            count.setBackground(ui.rounded(ui.dark ? ui.surface2 : ui.surface, 10));
+            addView(count, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ui.dp(20)));
+        }
+
+        void bind(int n, boolean open) {
+            count.setText(String.valueOf(n));
+            chevron.setRotation(open ? 90 : 0);
+            setContentDescription("Filtered, " + n + (n == 1 ? " conversation" : " conversations") + (open ? ", shown" : ", hidden"));
         }
     }
 
@@ -694,5 +784,15 @@ final class InboxScreen extends Screen {
     /** Tests: pull to refresh as a finger would. */
     void refreshForTests() {
         pull.start();
+    }
+
+    /** Tests only: the list's rows as the adapter holds them (conversations, and the Filtered row). */
+    List<Object> entriesForTests() {
+        return new ArrayList<>(adapter.items);
+    }
+
+    /** Tests only: a row drawn afresh, whether or not it is on screen. */
+    View rowForTests(int position) {
+        return adapter.getView(position, null, list);
     }
 }

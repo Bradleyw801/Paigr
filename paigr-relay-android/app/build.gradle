@@ -19,8 +19,8 @@ android {
         applicationId 'com.textrelay.relay'
         minSdk 29
         targetSdk 35
-        versionCode 16
-        versionName '1.4.1-beta'
+        versionCode 17
+        versionName '1.5.0'
     }
 
     signingConfigs {
@@ -32,6 +32,10 @@ android {
                 keyPassword keystoreProps['keyPassword']
             }
         }
+    }
+
+    buildFeatures {
+        buildConfig true   // the version string in the heartbeat and on screen comes from here, never typed twice
     }
 
     buildTypes {

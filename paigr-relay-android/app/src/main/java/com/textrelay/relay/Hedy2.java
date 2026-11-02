@@ -138,6 +138,7 @@ final class Hedy2 extends Hedy {
                 "src", "store".equals(it.optString("src")) ? "store" : "notif");
         if (it.optBoolean("read")) put(w, "read", true);
         if (it.optBoolean("history")) put(w, "history", true);
+        if (it.optBoolean("quiet") && "in".equals(dir)) put(w, "quiet", true);   // Messages kept it to itself: Filtered on devices
         if (it.has("status")) put(w, "status", it.optString("status"));
         if (it.optBoolean("wantMedia")) put(w, "wantMedia", true);
         // The payload names the message's own time and keyed fingerprint (the stem of its files' paths), so a device

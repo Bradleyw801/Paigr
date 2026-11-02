@@ -42,6 +42,19 @@ public final class Files extends ContentProvider {
         return uriFor(c, f);
     }
 
+    /** Writes bytes to `f` whole (through a temporary name, so a crash leaves no half file). */
+    static void writeAll(File f, byte[] bytes) throws java.io.IOException {
+        File tmp = new File(f.getPath() + ".tmp");
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(tmp)) {
+            out.write(bytes);
+        }
+        if (!tmp.renameTo(f)) throw new java.io.IOException("couldn't keep " + f.getName());
+    }
+
+    static byte[] readAll(File f) throws java.io.IOException {
+        return java.nio.file.Files.readAllBytes(f.toPath());
+    }
+
     /** Throws out shared files older than a day (Messages has long read what it was handed). */
     static void sweep(Context c) {
         File dir = new File(c.getCacheDir(), "mms");

@@ -240,6 +240,50 @@ public class NotificationChecksTest {
         assertEquals(Integer.valueOf(0), heard.get(mom));
     }
 
+    /**
+     * A conversation under Filtered (Messages' spam folder on the relay phone, or the owner's filing) is never
+     * announced, and counts for nothing in the shade, until it comes back out.
+     */
+    @Test
+    public void aFilteredConversationIsNotAnnouncedAndCountsForNothing() throws Exception {
+        String prize = l.convIdForTests("prize");
+        java.util.Map<String, Integer> heard = new java.util.HashMap<>();
+        Sync s = new Sync(prefs, new Sync.Listener() {
+            @Override
+            public void onIncoming(List<JSONObject> messages) {
+                announced.add(messages);
+            }
+
+            @Override
+            public void onRelayState(boolean online, long lastSeen) {
+            }
+
+            @Override
+            public void onUnread(java.util.Map<String, Integer> unread) {
+                heard.putAll(unread);
+            }
+        });
+        s.link = l;
+        announced.clear();
+        String e = l.sealForTests(new JSONObject().put("text", "You have won").put("sender", "(801) 555-0190").put("name", "(801) 555-0190")
+                .put("group", false).put("ts", System.currentTimeMillis()).put("fp", "0123456789abcd01"), Crypto.aadMessage(prize, "in"));
+        syncAnswer = page(new JSONArray().put(rec("m:11:quiet", prize, e)),
+                new JSONArray().put(new JSONObject().put("conv", prize).put("unread", 1).put("filtered", true).put("filteredBy", "relay")));
+        s.checkOnce(new Hedy(l));
+        assertTrue("nothing announced for a Filtered conversation", announced.isEmpty());
+        assertEquals("and nothing in the shade for it", Integer.valueOf(0), heard.get(prize));
+
+        // Back in the inbox (Messages notified about the next one): announced like any other
+        String e2 = l.sealForTests(new JSONObject().put("text", "Sorry, wrong number").put("sender", "(801) 555-0190").put("name", "(801) 555-0190")
+                .put("group", false).put("ts", System.currentTimeMillis()).put("fp", "0123456789abcd02"), Crypto.aadMessage(prize, "in"));
+        syncAnswer = page(new JSONArray().put(rec("m:12:loud", prize, e2)),
+                new JSONArray().put(new JSONObject().put("conv", prize).put("unread", 2).put("filtered", false)));
+        s.checkOnce(new Hedy(l));
+        assertEquals(1, announced.size());
+        assertEquals("Sorry, wrong number", announced.get(0).get(0).getString("text"));
+        assertEquals(Integer.valueOf(2), heard.get(prize));
+    }
+
     private static String summaryText(NotificationManager nm) {
         Notification summary = shadowOf(nm).getNotification(Notifier.SUMMARY_ID);
         assertNotNull(summary);

@@ -371,7 +371,10 @@ public class ConversationFeaturesTest {
         // One conversation from its row's long press: only that one.
         android.widget.ListView rows = a.list.list;
         int at = -1;
-        for (int i = 0; i < rows.getAdapter().getCount(); i++) if (rows.getAdapter().getItem(i) == crew || ((Model.Conv) rows.getAdapter().getItem(i)).conv.equals(crew.conv)) at = i;
+        for (int i = 0; i < rows.getAdapter().getCount(); i++) {
+            Object row = rows.getAdapter().getItem(i);
+            if (row == crew || (row instanceof Model.Conv && ((Model.Conv) row).conv.equals(crew.conv))) at = i;
+        }
         assertTrue(at >= 0);
         rows.setSelection(at);
         ShadowLooper.idleMainLooper();
@@ -524,15 +527,202 @@ public class ConversationFeaturesTest {
         sent(s, out.getString("id"), "mms");
         waitFor("sent as MMS", () -> allText(a.thread.root).contains("Sent as MMS"));
 
-        // A file too big for the inbox is refused here, in words, before anything is uploaded.
+        // A video goes as MMS from the relay phone, which said (in its heartbeat) how big one may be: a bigger one is
+        // refused here, in words, before anything is uploaded. The picker didn't say this one's size, so it's read as
+        // it goes out, and stops at the relay phone's limit.
+        assertEquals(1_000_000 - 3072, a.inbox.mmsMax());
         Uri huge = Uri.parse("content://com.example.pick/files/holiday.mov");
         Shadows.shadowOf(app.getContentResolver()).registerInputStreamSupplier(huge, () -> zeros(Inbox.ATTACH_MAX + 1));
         a.thread.attach(huge);
         ShadowLooper.idleMainLooper();
-        assertNotNull(a.thread.pendingForTests());   // the picker didn't say its size, so it's read as it goes out
+        assertNotNull(a.thread.pendingForTests());
         find(a.thread.root, "Send").performClick();
         ShadowLooper.idleMainLooper();
-        waitFor("the refusal", () -> allText(a.thread.root).contains("too big to send (25 MB at most)"));
+        waitFor("the refusal", () -> allText(a.thread.root).contains("Too big for an MMS from the relay phone."));
+        // One whose size the picker does say is refused at once, with the limit and the size.
+        String said = a.inbox.cantSend("video/quicktime", 38L * 1024 * 1024);
+        assertEquals("Videos go out as MMS from the relay phone, which takes up to 974 KB there. This one is 38.0 MB.", said);
+        assertNull("a picture always goes: it's shrunk to fit", a.inbox.cantSend("image/png", 38L * 1024 * 1024));
+        assertEquals("GIFs go out as MMS from the relay phone, which takes up to 974 KB there. This one is 2.0 MB.", a.inbox.cantSend("image/gif", 2L * 1024 * 1024));
+        assertNull(a.inbox.cantSend("application/pdf", 900_000));
         c.pause().stop().destroy();
+    }
+
+    /**
+     * A big picture is shrunk before it's sealed (the relay phone would shrink it to the carrier's MMS limits anyway),
+     * so it goes up in a moment; a video carries a frame of itself as its preview; and a video too big for the inbox,
+     * which the relay phone sent up as its poster and size, shows as a picture with where it is.
+     */
+    @Test
+    public void picturesAreShrunkForMmsVideosCarryAPosterAndABigVideoShowsWhereItIs() throws Exception {
+        RealInbox s = start("demo");
+        ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
+        MainActivity a = c.get();
+        waitFor("the list", () -> a.inbox.convs.size() >= 9);
+        Model.Conv maya = named(a, "Maya Chen");
+        a.openConversation(maya.conv);
+        waitFor("Maya's thread", () -> a.inbox.thread(maya.conv).size() >= 7 && a.inbox.cursors.containsKey(maya.conv));
+        Link l = prefs.link();
+        assertFalse("the relay phone said Messages takes no pictures from it", a.inbox.pictureGoesWhole());
+
+        byte[] big = noisyPng(2400, 1800);
+        assertTrue("a picture worth shrinking", big.length > Inbox.SEND_WHOLE_BELOW);
+        Uri uri = Uri.parse("content://com.example.pick/photos/beach.png");
+        Shadows.shadowOf(app.getContentResolver()).registerInputStreamSupplier(uri, () -> new ByteArrayInputStream(big));
+        a.thread.attach(uri);
+        ShadowLooper.idleMainLooper();
+        find(a.thread.root, "Send").performClick();
+        ShadowLooper.idleMainLooper();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        JSONObject out = newestOutbox(s, seen);
+        JSONObject media = l.open(out.getString("o"), Crypto.aadOut(maya.conv)).getJSONObject("media");
+        assertEquals("image/jpeg", media.getString("mime"));
+        assertTrue(media.getInt("bytes") + " bytes", media.getInt("bytes") < big.length / 2);
+        JSONObject record = recordByPath(s, media.getString("path"));
+        JSONObject shown = l.open(record.getString("e"), Crypto.aadMessage(maya.conv, "out")).getJSONObject("media");
+        assertEquals(Inbox.SEND_SIDE, shown.getInt("w"));
+        assertEquals(1200, shown.getInt("h"));
+        assertEquals("image/jpeg", shown.getString("mime"));
+        sent(s, out.getString("id"), "mms");
+
+        // A video too big for the inbox arrived on the relay phone: its poster and size came up, the video stayed there.
+        long ts = System.currentTimeMillis();
+        String fp = l.fpId("big-" + ts);
+        byte[] poster = png(960, 540);
+        String preview = "/media/v2/" + l.tid + "/" + maya.conv + "/" + String.format(java.util.Locale.US, "%013d", ts) + "-" + fp + "-p.enc";
+        byte[] sealedPoster = l.sealFile(poster, Crypto.aadFile(maya.conv, ts, fp, "preview"));
+        JSONObject put = s.call("POST", "/v2/media/put", s.link.getString("relayToken"), sealedPoster, new String[][] {
+                { "x-relay-conv", maya.conv }, { "x-relay-fp", fp }, { "x-relay-ts", Long.toString(ts) }, { "x-relay-kind", "preview" }, { "content-type", "application/octet-stream" } });
+        assertEquals(put.toString(), preview, put.getString("path"));
+        JSONObject payload = new JSONObject().put("text", "").put("sender", "Maya Chen").put("name", "Maya Chen").put("group", false).put("ts", ts).put("fp", fp)
+                .put("media", new JSONObject().put("mime", "video/mp4").put("w", 960).put("h", 540).put("bytes", 60L * 1024 * 1024));
+        JSONObject rec = new JSONObject().put("conv", maya.conv).put("fp", fp).put("ts", ts).put("dir", "in").put("src", "notif")
+                .put("e", l.seal(payload, Crypto.aadMessage(maya.conv, "in"))).put("mt", l.matchToken("in", "", "video/mp4"))
+                .put("media", new JSONObject().put("preview", preview));
+        JSONObject r = s.call("POST", "/v2/relay/ingest", s.link.getString("relayToken"), new JSONObject().put("items", new JSONArray().put(rec)));
+        assertEquals(r.toString(), 200, r.getInt("_status"));
+        waitFor("the big video's row", () -> allText(a.thread.root).contains("Video, 60.0 MB: on the relay phone, in Messages."));
+        ThreadScreen.Item row = null;
+        for (ThreadScreen.Item it : a.thread.itemsForTests()) if (it.m != null && it.m.media != null && preview.equals(it.m.media.preview)) row = it;
+        assertNotNull(row);
+        assertNull(row.m.media.path);
+        assertEquals(60L * 1024 * 1024, row.m.media.bytes);
+        c.pause().stop().destroy();
+    }
+
+    /** A PNG with noise in it, so it's big enough to be worth shrinking. */
+    /**
+     * A text Messages on the relay phone filed as spam (found in its message store with no notification for it) sits
+     * under Filtered: out of the list proper and its counts, named for what it is in the thread, and the owner moves
+     * it to the inbox and back, which the inbox records as their word.
+     */
+    @Test
+    public void whatMessagesKeepsQuietSitsUnderFilteredAndTheOwnerMovesItEitherWay() throws Exception {
+        RealInbox s = start("demo");
+        ActivityController<MainActivity> c = Robolectric.buildActivity(MainActivity.class).setup();
+        MainActivity a = c.get();
+        waitFor("the list", () -> a.inbox.convs.size() >= 10);
+        Model.Conv prize = named(a, "(801) 555-0190");
+        assertNotNull(prize);
+        assertTrue(prize.filtered);
+        assertEquals("relay", prize.filteredBy);
+        assertEquals(1, prize.unread);
+        int counted = a.inbox.unreadElsewhere();
+        for (Model.Conv x : a.inbox.convs.values()) if (x.filtered) assertTrue(counted + " counts " + x.name, counted >= 0);
+
+        // The list: not among the conversations, under a Filtered row at the end that opens on a tap.
+        ShadowLooper.idleMainLooper();
+        java.util.List<Object> rows = a.list.entriesForTests();
+        assertEquals(InboxScreen.FILTERED_HEAD, rows.get(rows.size() - 1));
+        for (Object r : rows) if (r instanceof Model.Conv) assertFalse(((Model.Conv) r).name, ((Model.Conv) r).filtered);
+        View head = a.list.rowForTests(rows.size() - 1);
+        assertEquals("Filtered, 1 conversation, hidden", head.getContentDescription());
+        a.list.showFiltered = true;
+        a.list.changed(Inbox.LIST, false);
+        ShadowLooper.idleMainLooper();
+        rows = a.list.entriesForTests();
+        assertEquals(InboxScreen.FILTERED_HEAD, rows.get(rows.size() - 2));
+        assertEquals(prize.conv, ((Model.Conv) rows.get(rows.size() - 1)).conv);
+        assertEquals("Filtered, 1 conversation, shown", a.list.rowForTests(rows.size() - 2).getContentDescription());
+        String screen;
+
+        // The thread says why, and offers the way back.
+        a.openConversation(prize.conv);
+        waitFor("the thread", () -> a.inbox.cursors.containsKey(prize.conv));
+        ShadowLooper.idleMainLooper();
+        screen = allText(a.thread.root);
+        assertTrue(screen, screen.contains("In Filtered: Messages on the relay phone keeps this conversation quiet"));
+        assertTrue(screen, screen.contains("Move to the inbox"));
+        find(a.thread.root, "Move to the inbox").performClick();
+        ShadowLooper.idleMainLooper();
+        assertFalse(named(a, "(801) 555-0190").filtered);
+        waitFor("the inbox's word", () -> {
+            try {
+                JSONObject v = s.dump().getJSONObject("v2-convs").optJSONObject(prefs.link().tid + "/" + prize.conv);
+                return v != null && !v.optBoolean("filtered", true) && "user".equals(v.optString("filteredBy"));
+            } catch (Exception e) {
+                return false;
+            }
+        });
+        ShadowLooper.idleMainLooper();
+        screen = allText(a.thread.root);
+        assertFalse(screen, screen.contains("In Filtered"));
+
+        // A quiet text from the relay phone no longer moves it: the owner said inbox.
+        quietly(s, prefs.link(), prize.conv, "(801) 555-0190", "Last chance to claim");
+        waitFor("the text", () -> saying(a, prize.conv, "Last chance to claim") != null);
+        assertFalse(named(a, "(801) 555-0190").filtered);
+
+        // And back under Filtered from the list's menu: the owner's own filing, said so.
+        a.onBackPressed();
+        waitFor("the list again", () -> a.list.root.getVisibility() == View.VISIBLE);
+        boolean[] done = { false };
+        a.inbox.setFiltered(prize.conv, true, ok -> done[0] = ok);
+        waitFor("the inbox heard", () -> done[0]);
+        assertTrue(named(a, "(801) 555-0190").filtered);
+        assertEquals("user", named(a, "(801) 555-0190").filteredBy);
+        ShadowLooper.idleMainLooper();
+        rows = a.list.entriesForTests();
+        assertTrue(rows.contains(InboxScreen.FILTERED_HEAD));
+        a.openConversation(prize.conv);
+        ShadowLooper.idleMainLooper();
+        screen = allText(a.thread.root);
+        assertTrue(screen, screen.contains("In Filtered."));
+        assertFalse(screen, screen.contains("Messages on the relay phone keeps"));
+        // its unread count stays out of the back count
+        assertEquals(counted, a.inbox.unreadElsewhere());
+    }
+
+    /** A text the relay phone found in its message store with no notification for it: Messages' spam folder. */
+    private static void quietly(RealInbox s, Link l, String conv, String name, String text) throws Exception {
+        long ts = System.currentTimeMillis();
+        String fp = l.fpId("quiet-" + ts + "-" + Crypto.hex(Crypto.random(3)));
+        JSONObject payload = new JSONObject().put("text", text).put("sender", name).put("name", name).put("group", false).put("ts", ts).put("fp", fp);
+        JSONObject rec = new JSONObject().put("conv", conv).put("fp", fp).put("ts", ts).put("dir", "in").put("src", "store").put("read", false).put("quiet", true)
+                .put("e", l.seal(payload, Crypto.aadMessage(conv, "in")))
+                .put("ne", l.seal(new JSONObject().put("name", name).put("group", false), Crypto.aadName(conv)))
+                .put("mt", l.matchToken("in", text, ""));
+        JSONObject r = s.call("POST", "/v2/relay/ingest", s.link.getString("relayToken"), new JSONObject().put("items", new JSONArray().put(rec)));
+        assertEquals(r.toString(), 200, r.getInt("_status"));
+    }
+
+    private static byte[] noisyPng(int w, int h) {
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        int[] px = new int[w * h];
+        java.util.Random rnd = new java.util.Random(7);
+        for (int i = 0; i < px.length; i++) px[i] = 0xFF000000 | rnd.nextInt(0xFFFFFF);
+        b.setPixels(px, 0, w, 0, 0, w, h);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        b.compress(Bitmap.CompressFormat.PNG, 100, out);
+        return out.toByteArray();
+    }
+
+    private static JSONObject recordByPath(RealInbox s, String path) throws Exception {
+        JSONObject held = s.dump().getJSONObject("v2-messages");
+        for (java.util.Iterator<String> keys = held.keys(); keys.hasNext(); ) {
+            JSONObject v = held.getJSONObject(keys.next());
+            if (v.optJSONObject("media") != null && path.equals(v.getJSONObject("media").optString("path"))) return v;
+        }
+        throw new AssertionError("no message holds " + path);
     }
 }

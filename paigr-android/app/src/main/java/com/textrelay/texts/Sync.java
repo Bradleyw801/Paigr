@@ -71,6 +71,10 @@ final class Sync {
         JSONObject r = read(hedy, feed, incoming, unread);
         // Read somewhere already by the time this phone heard of it: nothing to announce.
         incoming.removeIf(m -> Integer.valueOf(0).equals(unread.get(m.optString("conv", ""))));
+        // A Filtered conversation (Messages' spam folder on the relay phone, or the owner's filing): nothing to announce
+        // either, and its count stays out of the badge.
+        incoming.removeIf(m -> filtered.contains(m.optString("conv", "")));
+        for (String conv : filtered) if (unread.containsKey(conv)) unread.put(conv, 0);
         // With the app open, a text in the conversation on screen is being read as it arrives; one in any other
         // conversation is announced like any other, so it isn't missed because the list happened to be open.
         if (screenOpen) {
@@ -83,10 +87,14 @@ final class Sync {
         return interval();
     }
 
+    /** Conversations the last read heard were under Filtered. */
+    private final java.util.Set<String> filtered = new java.util.HashSet<>();
+
     /** Reads the log from the cursor until it is caught up, collecting incoming messages not seen before. */
     private JSONObject read(Hedy hedy, String cursor, List<JSONObject> incoming, java.util.Map<String, Integer> unread) throws IOException {
         JSONObject r = null;
         String at = cursor;
+        filtered.clear();
         for (int round = 0; round < 10; round++) {
             r = hedy.get("/api/sync?feed=" + encode(at));
             if (r.optBoolean("reset", false)) {
@@ -104,6 +112,10 @@ final class Sync {
                 if (c != null && c.optJSONArray("merged") != null) merged.put(c.optString("conv"), c.optJSONArray("merged"));
                 if (c != null && unread != null && c.opt("conv") instanceof String && c.opt("unread") instanceof Number) {
                     unread.put(c.optString("conv"), Math.max(0, c.optInt("unread")));   // a later round's is newer
+                }
+                if (c != null && c.opt("conv") instanceof String) {
+                    if (Boolean.TRUE.equals(c.opt("filtered"))) filtered.add(c.optString("conv"));
+                    else filtered.remove(c.optString("conv"));
                 }
             }
             if (items != null) {

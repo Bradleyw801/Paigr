@@ -9,7 +9,7 @@ const { start } = require("../paigr-server");
 
 const port = Number(process.argv[2] || 8788);
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paigr-test-"));
-const COLLECTIONS = ["v2-messages", "v2-convs", "v2-devices", "v2-offers", "v2-state", "messages", "conversations"];
+const COLLECTIONS = ["v2-messages", "v2-convs", "v2-devices", "v2-offers", "v2-state", "v2-feed", "messages", "conversations"];
 
 function body(req) {
   return new Promise((resolve) => { const c = []; req.on("data", (d) => c.push(d)); req.on("end", () => resolve(Buffer.concat(c))); });

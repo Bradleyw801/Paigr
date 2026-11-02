@@ -475,7 +475,7 @@ final class FakeHedy implements AutoCloseable {
                     .put("ts", w.optLong("ts")).put("dir", w.optString("dir")).put("src", w.optString("src"))
                     .put("text", payload.optString("text")).put("sender", payload.optString("sender"))
                     .put("name", payload.optString("name")).put("group", payload.optBoolean("group"));
-            for (String k : new String[] { "read", "history", "status", "wantMedia", "mt" }) if (w.has(k)) it.put(k, w.get(k));
+            for (String k : new String[] { "read", "history", "status", "wantMedia", "mt", "quiet" }) if (w.has(k)) it.put(k, w.get(k));
             if (w.has("ne")) it.put("_name", l.open(w.getString("ne"), Crypto.aadName(w.optString("conv"))).optString("name"));
             JSONObject about = payload.optJSONObject("media");
             JSONObject where = w.optJSONObject("media");

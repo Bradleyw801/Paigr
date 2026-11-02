@@ -317,7 +317,7 @@ final class SettingsScreen extends Screen {
             if (Boolean.FALSE.equals(r.smsFallback)) s.append("\nSMS fallback off");
             if (!r.note.isEmpty()) s.append("\n").append(r.note);
         } else {
-            s.append("Open Relay on it and check it says Relaying.");
+            s.append("Open Paigr Relay on it and check it says Relaying.");
         }
         relayRow.sub(s);
         reconnectRow.view.setEnabled(!inbox.reconnecting());
@@ -384,7 +384,7 @@ final class SettingsScreen extends Screen {
         String model = inbox.relay != null ? inbox.relay.model : "";
         for (Model.Device d : list) {
             boolean relay = "relay".equals(d.role);
-            String title = relay ? "Relay phone" : d.name.isEmpty() ? "Texts" : d.name;
+            String title = relay ? "Relay phone" : d.name.isEmpty() ? "A device" : d.name;
             if (d.you) title += " (this phone)";
             Ui.Row r = ui.row(relay ? R.drawable.ic_beacon : R.drawable.ic_phone, relay ? 0xFFE86A3A : Ui.BRAND.hi, title, null);
             String sub = (relay && !model.isEmpty() ? model + ". " : relay && !d.name.isEmpty() ? d.name + ". " : "")

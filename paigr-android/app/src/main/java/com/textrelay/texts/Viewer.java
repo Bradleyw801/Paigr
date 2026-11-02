@@ -132,6 +132,17 @@ final class Viewer extends Screen {
             });
             return;
         }
+        if (media.path == null && "Video".equals(kind)) {
+            // Too big for the inbox: its poster, and where the video itself is.
+            image.setVisibility(View.VISIBLE);
+            caption.setText(kind + (media.bytes > 0 ? ", " + Format.bytes(media.bytes) : "") + ". Too big for the inbox, so it stayed on the relay phone, in Messages.");
+            inbox.media.picture(media.preview, screen, b -> {
+                if (t != token || !open) return;
+                wait.setVisibility(View.GONE);
+                if (b != null) image.show(b);
+            });
+            return;
+        }
         String path = media.path != null ? media.path : media.preview;
         inbox.media.bytes(path, bytes -> {
             if (t != token || !open) return;

@@ -107,9 +107,13 @@ public class SyncService extends Service {
         return s;
     }
 
+    /** A ring that came while a check was running: the next check follows at once instead of waiting out the interval. */
+    private static volatile boolean poked;
+
     /** Check now instead of at the next interval (the doorbell rang, or the app came to the front). */
     static void wake() {
         synchronized (signal) {
+            poked = true;
             signal.notifyAll();
         }
     }
@@ -260,7 +264,8 @@ public class SyncService extends Service {
             }
             synchronized (signal) {
                 try {
-                    signal.wait(wait);
+                    if (!poked) signal.wait(wait);
+                    poked = false;
                 } catch (InterruptedException e) {
                     return;
                 }

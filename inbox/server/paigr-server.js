@@ -39,8 +39,8 @@ const LIMITS = {
   frame: 64 * 1024,              // what a phone may send on its socket (it has nothing to say there)
   sockets: 1000,
   tickets: 20000,
-  burst: 300,                    // requests one address can make at once,
-  refill: 10                     // and then this many a second
+  burst: 1500,                   // requests one address can make at once (a resync, or a photo grid scrolled fast),
+  refill: 50                     // and then this many a second
 };
 const TICKET_MS = 2 * 60000;          // a realtime ticket is used at once, or not at all
 const PING_MS = 45000;                // the server checks each socket this often,
@@ -590,6 +590,8 @@ async function start(options) {
   // arrives from the same address, which these limits allow for.)
   const buckets = new Map();
   function allowed(req) {
+    // A signed file link was already paid for by the call that made it: fetching it is never refused.
+    if (String(req.url || "").startsWith("/_files/")) return true;
     const at = req.socket.remoteAddress || "?";
     const now = Date.now();
     const b = buckets.get(at) || { n: LIMITS.burst, t: now };

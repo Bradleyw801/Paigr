@@ -31,6 +31,8 @@ final class Parser {
         final Uri dataUri;     // picture or other attachment, when there is one
         final String mime;
         final String number;   // the sender's phone number when Messages put a tel: URI on them; else null
+        /** Which of several messages stamped alike this is (two pictures sent at once): 0 for the first, and for every ordinary message. */
+        int ordinal;
 
         Msg(long time, String sender, boolean self, String text, Uri dataUri, String mime) {
             this(time, sender, self, text, dataUri, mime, null);
@@ -48,7 +50,7 @@ final class Parser {
 
         /** Stable fingerprint, so a message is relayed once however often Messages re-posts it. */
         String fingerprint() {
-            return hash(time + "\u0001" + sender + "\u0001" + text + "\u0001" + (mime != null ? mime : ""), 8);
+            return hash(time + "\u0001" + sender + "\u0001" + text + "\u0001" + (mime != null ? mime : "") + (ordinal > 0 ? "\u0001" + ordinal : ""), 8);
         }
     }
 
@@ -130,8 +132,11 @@ final class Parser {
                 String sender = from != null && from.getName() != null ? from.getName().toString() : null;
                 nobody &= from != null && blank(from.getName());
                 CharSequence text = m.getText();
-                messages.add(new Msg(m.getTimestamp(), sender, self, text != null ? text.toString() : "",
-                        m.getDataUri(), m.getDataMimeType(), self ? null : telOf(from)));
+                Msg msg = new Msg(m.getTimestamp(), sender, self, text != null ? text.toString() : "",
+                        m.getDataUri(), m.getDataMimeType(), self ? null : telOf(from));
+                // Two pictures sent at once come as two messages stamped alike: the second is not the first again.
+                for (Msg earlier : messages) if (earlier.fingerprint().equals(msg.fingerprint())) msg.ordinal++;
+                messages.add(msg);
             }
             hidden = messages.size() == 1
                     && (isHiddenText(messages.get(0).text) || nobody && user != null && blank(user.getName()));

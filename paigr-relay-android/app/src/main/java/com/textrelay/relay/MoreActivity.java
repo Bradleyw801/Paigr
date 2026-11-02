@@ -147,7 +147,7 @@ public class MoreActivity extends Activity {
             refresh();
         });
         box.addView(status.view);
-        TextView why = ui.label("It keeps running either way.", 13f, Ui.BODY, ui.text3);
+        TextView why = ui.label("Shown keeps it running while the screen is off. Hidden can make replies wait until the next text comes in.", 13f, Ui.BODY, ui.text3);
         why.setPadding(ui.dp(2), ui.dp(10), 0, 0);
         box.addView(why);
         note.addView(box);
@@ -243,7 +243,9 @@ public class MoreActivity extends Activity {
 
         boolean sms = relay.canSendSms();
         smsState.title.setText(sms ? "On" : "Off");
+        int mms = relay.mmsMax();
         smsState.sub(sms ? "A plain SMS when Messages can't reply, and to new numbers; pictures and files as MMS"
+                + (mms > 0 ? " (up to " + Text.bytes(mms) + " here)" : "")
                 : "Replies need Messages' notification; no new numbers or attachments from Paigr");
         allowSms.view.setVisibility(sms && contacts ? View.GONE : View.VISIBLE);
         allowSms.title.setText(sms ? "Allow contacts" : "Allow SMS fallback");

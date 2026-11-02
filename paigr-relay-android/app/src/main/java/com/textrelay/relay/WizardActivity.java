@@ -154,6 +154,10 @@ public class WizardActivity extends Activity {
     void go(int to) {
         if (pageTick != null) handler.removeCallbacks(pageTick);
         pageTick = null;
+        if (pairing != null) {
+            pairing.stop();   // a code's polling belongs to its page; the page that makes one makes it afresh
+            pairing = null;
+        }
         page = Math.max(0, Math.min(PAGES - 1, to));
         body.removeAllViews();
         LinearLayout col = new LinearLayout(this);

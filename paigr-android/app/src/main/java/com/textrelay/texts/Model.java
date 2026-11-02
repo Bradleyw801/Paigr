@@ -19,6 +19,10 @@ final class Model {
         String lastSender = "";
         boolean canReply = true;
         int unread;
+        /** Under Filtered: Messages on the relay phone keeps it quiet (its spam folder), or the owner put it there. */
+        boolean filtered;
+        /** "relay" or "user": whose doing the filing is (the owner's word stands against the relay phone's reading). */
+        String filteredBy = "";
         List<String> aliases = Collections.emptyList();
         String aliasKey = "";
 
@@ -33,6 +37,8 @@ final class Model {
             c.lastSender = lastSender;
             c.canReply = canReply;
             c.unread = unread;
+            c.filtered = filtered;
+            c.filteredBy = filteredBy;
             c.aliases = aliases;
             c.aliasKey = aliasKey;
             return c;
@@ -42,7 +48,7 @@ final class Model {
         boolean sameSummary(Conv o) {
             return o != null && name.equals(o.name) && group == o.group && lastTs == o.lastTs && lastText.equals(o.lastText)
                     && lastDir.equals(o.lastDir) && lastSender.equals(o.lastSender) && unread == o.unread && canReply == o.canReply
-                    && aliasKey.equals(o.aliasKey);
+                    && filtered == o.filtered && filteredBy.equals(o.filteredBy) && aliasKey.equals(o.aliasKey);
         }
     }
 
@@ -83,6 +89,10 @@ final class Model {
         Media media;
         /** Written here and not yet handed to the inbox. */
         boolean temp;
+        /** The sending device's own id for a message it sent (its row before the inbox had it): how the two are matched. */
+        String cid = "";
+        /** A row written here: how many times it has been sent; a send that couldn't reach the inbox tries again by itself a few times. */
+        int tries;
 
         boolean out() {
             return "out".equals(dir);
@@ -92,7 +102,7 @@ final class Model {
             return o != null && k.equals(o.k) && conv.equals(o.conv) && dir.equals(o.dir) && status.equals(o.status) && ts == o.ts
                     && read == o.read && history == o.history && via.equals(o.via) && src.equals(o.src) && code.equals(o.code)
                     && seal.equals(o.seal) && unchecked == o.unchecked && text.equals(o.text) && sender.equals(o.sender)
-                    && name.equals(o.name) && group == o.group && moved == o.moved && temp == o.temp
+                    && name.equals(o.name) && group == o.group && moved == o.moved && temp == o.temp && cid.equals(o.cid)
                     && (media == null ? o.media == null : media.same(o.media));
         }
     }
@@ -114,6 +124,10 @@ final class Model {
         boolean charging;
         double queued = Double.NaN;
         Boolean smsFallback;
+        /** The most an MMS from the relay phone can carry, in bytes; 0 while it can't send any, or hasn't said. */
+        long mmsMax;
+        /** Whether Messages' reply action on the relay phone takes pictures (then a picture goes through it, not as MMS). */
+        Boolean imageReply;
         /** In its own words, sealed by it: nothing the server wrote. */
         String note = "";
         String model = "";

@@ -39,7 +39,7 @@ final class Mms {
     /** What the carrier takes when it doesn't say (Android's own defaults). */
     static final int DEFAULT_MAX_BYTES = 300 * 1024, DEFAULT_MAX_WIDTH = 640, DEFAULT_MAX_HEIGHT = 480;
     /** Room for the headers, the layout and the text beside the file. */
-    private static final int OVERHEAD = 3072;
+    static final int OVERHEAD = 3072;
     /** How long a send may take before it's reported failed (the carrier can be slow to answer). */
     static final long SEND_WAIT_MS = 3 * 60_000L;
     private static final AtomicInteger SEQ = new AtomicInteger((int) (System.currentTimeMillis() & 0xFFFF));
@@ -327,8 +327,20 @@ final class Mms {
         }
     }
 
-    /** Hands the message to this phone's MMS service and waits for its answer (up to SEND_WAIT_MS). */
+    /** Told when the carrier's answer comes after the wait was over: the message was reported failed, and went after all. */
+    interface Late {
+        void answered(boolean sent);
+    }
+
+    /** How long after the wait a late answer is still listened for. */
+    static final long LATE_WAIT_MS = 10 * 60_000L;
+
     static Outcome send(Context context, SmsManager sms, byte[] pdu) throws IOException {
+        return send(context, sms, pdu, null);
+    }
+
+    /** Hands the message to this phone's MMS service and waits for its answer (up to SEND_WAIT_MS; a later one goes to `late`). */
+    static Outcome send(Context context, SmsManager sms, byte[] pdu, Late late) throws IOException {
         File dir = new File(context.getCacheDir(), "mms");
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("no room for the message");
         int n = SEQ.incrementAndGet() & 0x7FFFFFFF;
@@ -339,34 +351,57 @@ final class Mms {
         Uri uri = Files.uriFor(context, f);
         CountDownLatch done = new CountDownLatch(1);
         int[] result = { Integer.MIN_VALUE };
+        boolean[] waited = { false };   // the wait is over: an answer now is late
         String action = ACTION_SENT + "." + n;
         BroadcastReceiver r = new BroadcastReceiver() {
             @Override
             public void onReceive(Context c, Intent i) {
                 result[0] = getResultCode();
+                boolean isLate;
+                synchronized (waited) {
+                    isLate = waited[0];
+                }
                 done.countDown();
+                if (isLate) {
+                    unregister(context, this);
+                    if (late != null) late.answered(result[0] == Activity.RESULT_OK);
+                }
             }
         };
         IntentFilter filter = new IntentFilter(action);
         if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED);
         else context.registerReceiver(r, filter);
+        boolean answered = false;
         try {
             Intent sentIntent = new Intent(action).setPackage(context.getPackageName());
             PendingIntent sent = PendingIntent.getBroadcast(context, n, sentIntent, PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE);
             sms.sendMultimediaMessage(context, uri, null, null, sent);
-            if (!done.await(SEND_WAIT_MS, TimeUnit.MILLISECONDS)) return new Outcome(false, 0);
+            answered = done.await(SEND_WAIT_MS, TimeUnit.MILLISECONDS);
+            if (!answered) return new Outcome(false, 0);
             int code = result[0];
             return new Outcome(code == Activity.RESULT_OK, code);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            answered = true;
             return new Outcome(false, 0);
         } finally {
-            try {
-                context.unregisterReceiver(r);
-            } catch (RuntimeException ignored) {
-                // already gone
+            if (answered) unregister(context, r);
+            else {
+                // The carrier may still answer: the receiver stays a while, so a late "sent" corrects the report.
+                synchronized (waited) {
+                    waited[0] = true;
+                }
+                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> unregister(context, r), LATE_WAIT_MS);
             }
             if (!f.delete()) f.deleteOnExit();
+        }
+    }
+
+    private static void unregister(Context context, BroadcastReceiver r) {
+        try {
+            context.unregisterReceiver(r);
+        } catch (RuntimeException ignored) {
+            // already gone
         }
     }
 

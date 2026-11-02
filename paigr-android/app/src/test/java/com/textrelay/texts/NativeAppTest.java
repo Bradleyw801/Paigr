@@ -301,7 +301,7 @@ public class NativeAppTest {
         MainActivity b = c2.get();
         waitFor("the list from disk", () -> b.inbox.convs.size() >= 9);
         assertTrue(b.inbox.fromDisk);
-        assertEquals(9, b.list.list.getAdapter().getCount());
+        assertEquals(10, b.list.list.getAdapter().getCount());   // nine conversations and the Filtered row
         b.openConversation(maya.conv);
         waitFor("Maya's thread from disk", () -> b.inbox.thread(maya.conv).size() >= 7);
         assertTrue(allText(b.thread.root).contains("Doors open at 7"));
@@ -349,7 +349,7 @@ public class NativeAppTest {
         assertFalse(shown, shown.contains("Priya Shah"));
         a.onBackPressed();
         ShadowLooper.idleMainLooper();
-        assertEquals(9, a.list.list.getAdapter().getCount());
+        assertEquals(10, a.list.list.getAdapter().getCount());   // nine conversations and the Filtered row
 
         // The ring's arrows move through the list and OK opens the conversation under the highlight.
         a.list.list.requestFocus();

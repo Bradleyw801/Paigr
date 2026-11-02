@@ -1,5 +1,5 @@
 /* Paigr service worker: notifications, and a cached shell so the app opens offline. */
-const SHELL = "texts-shell-v13";
+const SHELL = "texts-shell-v15";
 const SHELL_FILES = ["/", "/index.html", "/app.js", "/tr2.js", "/styles.css", "/fonts/Figtree.woff2", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -18,10 +18,13 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/v2/") || url.pathname.startsWith("/__hedy/") || url.pathname.startsWith("/downloads/")) return;
-  // Network first for the shell, falling back to the cache when offline.
+  // Sealed files (a self-hosted server serves them from its own address, signed) are never kept here.
+  if (url.pathname.startsWith("/_files/") || url.pathname.startsWith("/_upload/") || url.search) return;
+  // Network first for the shell, falling back to the cache when offline; only the shell's own files are kept.
+  const shell = SHELL_FILES.includes(url.pathname);
   event.respondWith(
     fetch(event.request).then((res) => {
-      if (res.ok) {
+      if (res.ok && shell) {
         const copy = res.clone();
         caches.open(SHELL).then((c) => c.put(event.request, copy)).catch(() => {});
       }
@@ -49,6 +52,13 @@ function ownUrl(u) {
   } catch { return "/"; }
 }
 
+/** What the page says is on screen: a push for that conversation, while it's visible, shows nothing over it. */
+let viewing = { conv: null, visible: false };
+self.addEventListener("message", (event) => {
+  const d = event.data;
+  if (d && d.type === "viewing") viewing = { conv: typeof d.conv === "string" ? d.conv : null, visible: !!d.visible };
+});
+
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = {}; }
@@ -69,7 +79,15 @@ self.addEventListener("push", (event) => {
     data: { url: ownUrl(data.url) }
   };
   // The server's own title for a test push still names the app as it was first called.
-  event.waitUntil(self.registration.showNotification(title === "Text Relay" ? "Paigr" : title, options));
+  const conv = new URL(options.data.url, location.origin).searchParams.get("conv");
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      // The conversation is on screen in a visible window: the text is being read as it arrives.
+      const onScreen = conv && viewing.visible && viewing.conv === conv && list.some((c) => c.visibilityState === "visible");
+      if (onScreen) return;
+      return self.registration.showNotification(title === "Text Relay" ? "Paigr" : title, options);
+    })
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {

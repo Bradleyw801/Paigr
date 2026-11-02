@@ -1,7 +1,5 @@
 # Paigr
 
-Paigr is in beta, so expect some rough edges.
-
 Paigr lets you read and answer your texts on a different phone from the one with your SIM. I built it so I could
 carry a phone without Google services and still get every text, RCS included, from my real number.
 
@@ -49,7 +47,9 @@ from the keys to the checks every device makes.
 
 Reactions and quoted replies are sent as the plain texts phones already understand (iPhone-style tapback texts and
 `> ` quotes), because Google Messages doesn't let other apps send real ones. Attachments sent from Paigr go through
-Messages when it accepts files, and otherwise out of the relay phone as MMS.
+Messages when it accepts files, and otherwise out of the relay phone as MMS. Texts that Messages files as spam on
+the relay phone show up under Filtered, at the end of the list, with no notification; you can move any conversation
+in or out of Filtered yourself.
 
 ## Build
 

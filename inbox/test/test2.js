@@ -487,7 +487,7 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
   const s4 = await TR2.linkSecrets(TR2.newCode());
   assert.strictEqual((await call(relay, "POST", "/v2/link/invite", { lookup: s4.lookup, box: await TR2.sealJson(s4.boxKey, {}, "tr2:box"), role: "relay" }))._status, 403);
   // the phone with the SIM is replaced: the new Relay shows its code, the linked Texts scans it
-  const relay2 = phone("relay", "Pixel");
+  const relay2 = phone("relay", "Example Phone 2");
   const offer2 = await asks(relay2);
   let replaced = null;
   r = await scans(texts, offer2.code, { onAsk: c => { replaced = c; } });
@@ -713,6 +713,172 @@ const mediaPath = (tid, wconv, ts, wfp, kind) => "/media/v2/" + tid + "/" + wcon
     r = await ingest(relay3, [{ conv: started, name: "(801) 555-0177", dir: "out", text, ts: ts + 1500, fp: fp(4100), src: "store" }]);
     assert.strictEqual(r.folded, 1, JSON.stringify(r));
     assert.strictEqual((await textsOf(texts, started)).filter(t => t === text).length, 1);
+  }
+
+  // ================================================================ 8b2. Filtered: what Messages keeps quiet
+  {
+    // A text the relay phone found in the message store with no notification for it (Messages filed it as spam):
+    // the conversation goes under Filtered on every device, with no push for it.
+    const pushesWere = pushes.length;
+    const tq = Date.now() - 30000;
+    // (ingest() seals from plain descriptions; the quiet flag rides on the wire item, so these are built by hand)
+    const quietly = async (x) => call(relay3, "POST", "/v2/relay/ingest", { items: [Object.assign(await item(relay3, x), { quiet: true })] });
+    let r = await quietly({ conv: "q-spam", name: "+18015550777", sender: "+18015550777", text: "You have won", ts: tq, fp: fp(5101), src: "store" });
+    assert.strictEqual(r._status, 200, JSON.stringify(r));
+    let c = await convOf(texts, "q-spam");
+    assert.strictEqual(c.filtered, true);
+    assert.strictEqual(c.filteredBy, "relay");
+    assert.strictEqual(c.unread, 1, "still counted; devices leave Filtered out of their badges");
+    assert.strictEqual(pushes.length, pushesWere, "no push for a Filtered conversation");
+    const wq = await W(texts, "q-spam");
+    const stored = messagesOf(texts.tid).find(x => x.conv === wq);
+    assert.strictEqual(stored.quiet, true);
+    assert.ok((await call(texts, "GET", "/v2/inbox")).items.find(x => x.conv === c.conv).filtered === true, "the inbox says so");
+    // quiet means nothing on a reply, a history row or a notified text
+    r = await quietly({ conv: "q-spam", name: "+18015550777", dir: "out", text: "Stop", ts: tq + 1000, fp: fp(5102), src: "store" });
+    const kStop = await TR2.fpId(relay3.keys, fp(5102));
+    assert.ok(!messagesOf(texts.tid).find(x => x.k.endsWith(kStop) && x.quiet));
+
+    // Messages notifies about the next text in it (the owner took it out of spam on the relay phone): back in the inbox
+    await ingest(relay3, [{ conv: "q-spam", name: "+18015550777", sender: "+18015550777", text: "Sorry, wrong number", ts: tq + 2000, fp: fp(5103), src: "notif" }]);
+    c = await convOf(texts, "q-spam");
+    assert.strictEqual(c.filtered, false);
+    assert.ok(!c.filteredBy);
+    assert.strictEqual(pushes.length, pushesWere + 1, "a push again once it's back");
+
+    // a notification that arrives late folds into the quiet copy, and the conversation comes back out with it
+    const tl = Date.now() - 20000;
+    await quietly({ conv: "q-late", name: "Lee", sender: "+18015550778", text: "Late one", ts: tl, fp: fp(5104), src: "store" });
+    assert.strictEqual((await convOf(texts, "q-late")).filtered, true);
+    r = await ingest(relay3, [{ conv: "q-late", name: "Lee", sender: "+18015550778", text: "Late one", ts: tl + 500, fp: fp(5105), src: "notif" }]);
+    assert.strictEqual(r.results[0].status, "folded");
+    c = await convOf(texts, "q-late");
+    assert.strictEqual(c.filtered, false);
+    assert.ok(!messagesOf(texts.tid).find(x => x.conv === c.conv).quiet, "no longer a quiet text");
+    const carried = [...col("v2-feed").values()].filter(v => v.seen && v.conv === c.conv);
+    assert.ok(carried.length >= 1, "the log carries the conversation's new standing to every device");
+
+    // the owner's word: a device moves a conversation in or out, and the relay phone's reading no longer moves it
+    r = await call(texts, "POST", "/v2/filter", { conv: wq, filtered: true });
+    assert.strictEqual(r._status, 200, JSON.stringify(r));
+    assert.strictEqual(r.filtered, true);
+    c = await convOf(texts, "q-spam");
+    assert.strictEqual(c.filtered, true);
+    assert.strictEqual(c.filteredBy, "user");
+    await ingest(relay3, [{ conv: "q-spam", name: "+18015550777", sender: "+18015550777", text: "Hello again", ts: tq + 3000, fp: fp(5106), src: "notif" }]);
+    assert.strictEqual((await convOf(texts, "q-spam")).filtered, true, "a notified text doesn't undo the owner's choice");
+    assert.strictEqual(pushes.length, pushesWere + 1, "and still no push");
+    r = await call(texts, "POST", "/v2/filter", { conv: wq, filtered: false });
+    c = await convOf(texts, "q-spam");
+    assert.strictEqual(c.filtered, false);
+    assert.strictEqual(c.filteredBy, "user");
+    await quietly({ conv: "q-spam", name: "+18015550777", sender: "+18015550777", text: "Won again", ts: tq + 4000, fp: fp(5107), src: "store" });
+    assert.strictEqual((await convOf(texts, "q-spam")).filtered, false, "a quiet text doesn't undo it either");
+    assert.strictEqual((await call(texts, "POST", "/v2/filter", { conv: wq }))._status, 400);
+    assert.strictEqual((await call(texts, "POST", "/v2/filter", { conv: wq, filtered: "yes" }))._status, 400);
+    assert.strictEqual((await call(relay3, "POST", "/v2/filter", { conv: wq, filtered: true }))._status, 403, "the relay phone has no say here");
+    const feedConvs = (await call(texts, "GET", "/v2/sync", null, { feed: "f:" + pad13(tq - 60000) })).convs;
+    assert.ok(feedConvs.find(x => x.conv === wq && x.filteredBy === "user"), "a sync carries the standing");
+  }
+
+  // ================================================================ 8c. what a stable release pins down
+  {
+    // a reply sent again after a lost answer (the same client id) is the same message, not a second one
+    const wc = await W(texts, "c-again");
+    await ingest(relay3, [{ conv: "c-again", name: "Ava", sender: "+18015550199", text: "You there?", ts: Date.now() - 5000, fp: fp(5001) }]);
+    const again = async (cid) => {
+      const ts = Date.now();
+      const e = await TR2.sealJson(texts.keys.enc, { text: "Here now", ts }, TR2.AAD.message(wc, "out"));
+      const o = await TR2.sealJson(texts.keys.enc, { text: "Here now", n: TR2.b64u(TR2.random(16)), ts }, TR2.AAD.out(wc));
+      return call(texts, "POST", "/v2/send", { conv: wc, e, o, mt: await TR2.matchToken(texts.keys, "out", "Here now", ""), cid });
+    };
+    const first = await again("tmp:1700000000000:abc123");
+    const second = await again("tmp:1700000000000:abc123");
+    assert.strictEqual(first._status, 200, JSON.stringify(first));
+    assert.strictEqual(second.id, first.id);
+    assert.strictEqual(second.again, true);
+    assert.strictEqual((await textsOf(texts, "c-again")).filter(t => t === "Here now").length, 1);
+    const held = col("v2-messages").get(texts.tid + "/" + first.id);
+    assert.strictEqual(held.cid, "tmp:1700000000000:abc123");
+    const logged = [...col("v2-feed").values()].find(v => v.k === first.id);
+    assert.strictEqual(logged.cid, "tmp:1700000000000:abc123", "devices match the stored copy to their own row by it");
+    assert.ok(!("o" in logged), "the request never reaches the log");
+    const other = await again("tmp:1700000000000:zzz999");
+    assert.notStrictEqual(other.id, first.id, "another row is another message");
+    assert.strictEqual((await call(texts, "POST", "/v2/send", { conv: wc, e: "x", o: "y", cid: "not valid!" }))._status, 400);
+
+    // a reply's copy from the relay phone folds whatever that phone's clock says, within reason
+    const sent = await send(texts, "c-again", "Clock check");
+    await call(relay3, "POST", "/v2/relay/outbox/result", { id: sent.id, status: "sent", via: "rcs", canReply: true });
+    const slow = await ingest(relay3, [{ conv: "c-again", name: "Ava", dir: "out", text: "Clock check", ts: Date.now() - 95000, fp: fp(5002), src: "store" }]);
+    assert.strictEqual(slow.results[0].status, "folded", "the relay phone's clock 95 s behind: still the same text");
+    const fast = await ingest(relay3, [{ conv: "c-again", name: "Ava", dir: "out", text: "Clock check", ts: Date.now() + 8 * 60000, fp: fp(5003), src: "notif" }]);
+    assert.strictEqual(fast.results[0].status, "folded", "8 minutes ahead: the same text");
+    assert.strictEqual((await textsOf(texts, "c-again")).filter(t => t === "Clock check").length, 1);
+
+    // an entry that lands in the log after a device read past its place is still delivered: the device never passes the
+    // last 15 seconds, and takes each entry once by its key
+    const cursor = "f:" + pad13(Date.now() - 1);
+    const realPut = base.data.batchPut;
+    let gate = null, held2 = null;
+    base.data.batchPut = async (c, entries) => {
+      if (c === "v2-feed" && gate && !held2) {
+        held2 = entries;
+        await gate;
+      }
+      return realPut(c, entries);
+    };
+    let release;
+    gate = new Promise(r => { release = r; });
+    const straggler = ingest(relay3, [{ conv: "c-again", name: "Ava", sender: "+18015550199", text: "I was early", ts: Date.now(), fp: fp(5004) }]);
+    await new Promise(r => setTimeout(r, 30));
+    base.data.batchPut = realPut;   // the next write goes straight in, past the one still waiting
+    await ingest(relay3, [{ conv: "c-again", name: "Ava", sender: "+18015550199", text: "I was late", ts: Date.now(), fp: fp(5005) }]);
+    const early = await TR2.fpId(texts.keys, fp(5004)), late = await TR2.fpId(texts.keys, fp(5005));
+    const s1 = await call(texts, "GET", "/v2/sync", null, { feed: cursor });
+    assert.ok(s1.items.some(x => x.k.endsWith(late)), "the late one came");
+    assert.ok(!s1.items.some(x => x.k.endsWith(early)), "the early one hasn't landed");
+    release();
+    await straggler;
+    const s2 = await call(texts, "GET", "/v2/sync", null, { feed: s1.cursor });
+    assert.ok(s2.items.some(x => x.k.endsWith(early)), "and it comes on the next sync");
+    assert.ok(s2.cursor >= "f:" + pad13(Date.now() - 16000) && s2.cursor <= "f:" + pad13(Date.now()), "the cursor never passes the last 15 s: " + s2.cursor);
+    const s2b = await call(texts, "GET", "/v2/sync", null, { feed: s2.cursor });
+    assert.ok(s2b.items.some(x => x.k.endsWith(early)) && s2b.items.some(x => x.k.endsWith(late)), "young entries come again (devices take each once by its key)");
+    let s3 = await call(texts, "GET", "/v2/sync", null, { feed: "f:" + pad13(Date.now() - 3600000) });
+    for (let n = 0; n < 20 && s3.more; n++) s3 = await call(texts, "GET", "/v2/sync", null, { feed: s3.cursor });
+    assert.ok(s3.cursor >= "f:" + pad13(Date.now() - 16000) && s3.cursor <= "f:" + pad13(Date.now()), "caught up from an hour ago: " + s3.cursor);
+    const fresh = await call(texts, "GET", "/v2/inbox");
+    assert.ok(fresh.feed <= "f:" + pad13(Date.now() - 14000) && fresh.feed >= "f:" + pad13(Date.now() - 16000), "a first sync covers the last 15 s: " + fresh.feed);
+
+    // a merge counts a message read nowhere once, however many copies it folded
+    const t0m = Date.now() - 60000;
+    await ingest(relay3, [{ conv: "n-ben", name: "Ben", sender: "+18015550188", text: "First", ts: t0m, fp: fp(5010) }, { conv: "n-ben", name: "Ben", sender: "+18015550188", text: "Second", ts: t0m + 1000, fp: fp(5011) }]);
+    await ingest(relay3, [{ conv: "s-ben", name: "Ben", sender: "+18015550188", text: "First", ts: t0m + 200, fp: fp(5012), src: "store" }, { conv: "s-ben", name: "Ben", sender: "+18015550188", text: "Second", ts: t0m + 1200, fp: fp(5013), src: "store" }]);
+    assert.strictEqual((await convOf(texts, "n-ben")).unread, 2);
+    assert.strictEqual((await convOf(texts, "s-ben")).unread, 2);
+    const wn = await W(relay3, "n-ben"), ws = await W(relay3, "s-ben");
+    let m = await call(relay3, "POST", "/v2/relay/merge", { from: wn, into: ws, mr: await TR2.sealJson(relay3.keys.enc, { from: wn, into: ws }, TR2.AAD.merge(ws)) });
+    assert.strictEqual(m._status, 200, JSON.stringify(m));
+    assert.strictEqual(m.folded, 2);
+    assert.strictEqual((await convOf(texts, "s-ben")).unread, 2, "two texts unread, not four");
+    assert.strictEqual(messagesOf(texts.tid).filter(x => x.conv === ws).length, 2);
+    // then s-ben goes into a third, and the relay phone repeats the first merge: the same merge, where it went
+    await ingest(relay3, [{ conv: "g-ben", name: "Ben", sender: "+18015550188", text: "Third", ts: t0m + 5000, fp: fp(5014) }]);
+    const wg = await W(relay3, "g-ben");
+    m = await call(relay3, "POST", "/v2/relay/merge", { from: ws, into: wg, mr: await TR2.sealJson(relay3.keys.enc, { from: ws, into: wg }, TR2.AAD.merge(wg)) });
+    assert.strictEqual(m._status, 200, JSON.stringify(m));
+    m = await call(relay3, "POST", "/v2/relay/merge", { from: wn, into: ws, mr: await TR2.sealJson(relay3.keys.enc, { from: wn, into: ws }, TR2.AAD.merge(ws)) });
+    assert.strictEqual(m._status, 200, "repeating a merge whose target moved on is not an error: " + JSON.stringify(m));
+    assert.strictEqual(messagesOf(texts.tid).filter(x => x.conv === wg).length, 3);
+    assert.strictEqual((await convOf(texts, "g-ben")).unread, 3);
+    assert.ok(!(await convOf(texts, "s-ben")) && !(await convOf(texts, "n-ben")));
+
+    // a relay phone that leaves (or is removed) takes its status with it: no offline notice, no banner
+    assert.ok((await call(texts, "GET", "/v2/status")).relay, "a relay phone's status while it's there");
+    assert.strictEqual((await call(relay3, "POST", "/v2/leave"))._status, 200);
+    assert.strictEqual((await call(texts, "GET", "/v2/status")).relay, null);
+    assert.strictEqual(col("v2-state").get(texts.tid + "/relay"), undefined);
   }
 
   // ================================================================ 9. leaving

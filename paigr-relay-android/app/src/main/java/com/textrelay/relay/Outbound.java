@@ -35,6 +35,11 @@ final class Outbound {
         return items.size();
     }
 
+    /** Everything waiting, as it is now. */
+    synchronized List<JSONObject> snapshot() {
+        return new ArrayList<>(items);
+    }
+
     /** Queues the batch, skipping anything already waiting. Returns how many were added. */
     synchronized int add(List<JSONObject> batch) {
         java.util.Set<String> waiting = new java.util.HashSet<>();

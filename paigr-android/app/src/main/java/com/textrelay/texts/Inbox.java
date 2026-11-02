@@ -78,6 +78,8 @@ final class Inbox {
     final Prefs prefs;
     final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newFixedThreadPool(3, daemon("texts-io"));
+    /** Pages fetched ahead of a tap, on their own thread: never in front of a send or an opened conversation. */
+    private final ExecutorService ahead = Executors.newSingleThreadExecutor(daemon("texts-ahead"));
     private final ExecutorService disk = Executors.newSingleThreadExecutor(daemon("texts-disk"));
     Listener listener;
     final Media media;
@@ -108,16 +110,33 @@ final class Inbox {
     /** Conversations started here that the inbox doesn't list yet: nothing has been sent in them so far. */
     private final Map<String, Model.Conv> unsent = new LinkedHashMap<>();
     private boolean syncing;
+    /** The doorbell rang while a sync was running: another follows at once, so nothing waits for the next tick. */
+    private boolean ringPending;
+    private long lastSyncAt;
     private boolean visible;
     private Doorbell doorbell;
     private long lastRing;
     private boolean reconnecting;
+    /** Conversations the inbox hasn't been told were read (the call failed): told on the next sync that gets through. */
+    private final Set<String> readsOwed = new HashSet<>();
+    /** The open conversation whose page couldn't be fetched: fetched again when the inbox answers. */
+    private String pageNeeded;
+    /** Rows written here and not yet handed to the inbox, kept on this phone across a restart. */
+    final Outbox outbox;
 
     private Inbox(Context app) {
         this.app = app;
         this.prefs = new Prefs(app);
         this.media = new Media(this);
+        this.outbox = new Outbox(this);
         started.putAll(prefs.startedHere());
+        retried.addAll(prefs.retried());
+        readsOwed.addAll(prefs.readsOwed());
+    }
+
+    /** True while `conv` is being read: open as a thread, or its details (photos, files, links) over the thread. */
+    boolean reading(String conv) {
+        return conv != null && conv.equals(current) && ("thread".equals(view) || "details".equals(view));
     }
 
     private static ThreadFactory daemon(String name) {
@@ -145,12 +164,17 @@ final class Inbox {
 
     /** Runs `work` on a background thread and `then` with its result on the main thread, for the same inbox only. */
     private <T> void run(Work<T> work, Done<T> then, Failed failed) {
+        runOn(io, work, then, failed);
+    }
+
+    private <T> void runOn(ExecutorService on, Work<T> work, Done<T> then, Failed failed) {
         int at = gen;
-        io.execute(() -> {
+        on.execute(() -> {
             T result;
             try {
                 result = work.run();
-            } catch (Exception e) {
+            } catch (Exception | OutOfMemoryError thrown) {
+                Exception e = thrown instanceof Exception ? (Exception) thrown : new IOException("out of memory");
                 main.post(() -> {
                     if (gen != at) return;
                     if (e instanceof Hedy.ApiException && ((Hedy.ApiException) e).unlinked) {
@@ -188,7 +212,7 @@ final class Inbox {
             if (a.code == 429) return "Too many tries just now. Wait a minute and try again.";
             if (a.code == 404) return "The inbox doesn't have that any more.";
             if (a.code >= 500) return "The inbox had a problem. Try again in a moment.";
-            if (a.code > 0) return "The inbox refused that.";
+            if (a.code > 0) return "The inbox refused that. Try again; if it keeps happening, check for an update.";
         }
         if (e instanceof Tor.Down) return e.getMessage();
         if (e instanceof IOException && Tor.wanted()) return "Can't reach the inbox through Tor. Check that Orbot is connected.";
@@ -267,8 +291,44 @@ final class Inbox {
     void resume() {
         visible = true;
         if (link == null) return;
+        outbox.restore();
         if (!loadedInbox && convs.isEmpty()) fromDiskThenSync();
         else startSync();
+    }
+
+    void diskExecute(Runnable r) {
+        disk.execute(r);
+    }
+
+    /** A row kept on this phone from before a restart, back in its conversation as one that waits to go again. */
+    void restoreRow(JSONObject r) {
+        String conv = r.optString("conv");
+        if (conv.isEmpty()) return;
+        List<Model.Msg> list = msgs.get(conv);
+        if (list != null) for (Model.Msg m : list) if (m.k.equals(r.optString("cid")) || (!r.optString("seal").isEmpty() && r.optString("seal").equals(m.seal))) return;
+        Model.Msg m = new Model.Msg();
+        m.k = r.optString("cid");
+        m.cid = m.k;
+        m.conv = conv;
+        m.dir = "out";
+        m.status = "failed";
+        m.code = "offline";
+        m.text = r.optString("text");
+        m.ts = r.optLong("ts", System.currentTimeMillis());
+        m.temp = true;
+        m.tries = r.optInt("tries", 1);
+        m.seal = r.optString("seal");
+        if (!r.optString("uri").isEmpty()) {
+            m.media = new Model.Media();
+            m.media.mime = r.optString("mime", "application/octet-stream");
+            m.media.bytes = r.optLong("bytes", 0);
+            m.media.localUri = r.optString("uri");
+        }
+        if (list == null) msgs.put(conv, list = new ArrayList<>());
+        list.add(m);
+        list.sort(Model.BY_TIME);
+        if (conv.equals(current)) tell(THREAD, false);
+        if (visible && link != null) sync();   // it goes again as soon as the inbox answers
     }
 
     void pause() {
@@ -294,7 +354,8 @@ final class Inbox {
         public void run() {
             if (!visible || link == null) return;
             boolean up = doorbell != null && doorbell.isConnected();
-            if (!up || System.currentTimeMillis() - lastRing > SYNC_CONNECTED_MS) sync();
+            // With the socket up the server rings for news; a check this often is only insurance against a missed ring.
+            if (!up || System.currentTimeMillis() - lastSyncAt > SYNC_CONNECTED_MS) sync();
             main.postDelayed(this, SYNC_MS);
         }
     };
@@ -458,8 +519,49 @@ final class Inbox {
 
     int unreadElsewhere() {
         int n = 0;
-        for (Model.Conv c : convs.values()) if (!c.conv.equals(current)) n += c.unread;
+        for (Model.Conv c : convs.values()) if (!c.conv.equals(current) && !c.filtered) n += c.unread;
         return n;
+    }
+
+    /**
+     * The owner moves a conversation under Filtered or back to the inbox: shown so at once, and the inbox told, so
+     * every device files it the same way and the relay phone's reading no longer moves it. Says whether the inbox heard.
+     */
+    void setFiltered(String conv, boolean filtered, java.util.function.Consumer<Boolean> then) {
+        Model.Conv c = convs.get(conv);
+        Link at = link;
+        if (c == null || at == null) {
+            if (then != null) then.accept(false);
+            return;
+        }
+        boolean was = c.filtered;
+        String wasBy = c.filteredBy;
+        c.filtered = filtered;
+        c.filteredBy = "user";
+        if (filtered) SyncService.notifier(app).clear(conv);
+        tell(LIST | THREAD, false);
+        io.execute(() -> {
+            boolean told;
+            try {
+                new Hedy(at).post("/v2/filter", new JSONObject().put("conv", conv).put("filtered", filtered));
+                told = true;
+            } catch (IOException | JSONException e) {
+                told = false;
+            }
+            boolean ok = told;
+            main.post(() -> {
+                if (link != at) return;
+                if (!ok) {
+                    Model.Conv now = convs.get(conv);
+                    if (now != null && now.filtered == filtered && "user".equals(now.filteredBy)) {   // not heard: as it was
+                        now.filtered = was;
+                        now.filteredBy = wasBy;
+                        tell(LIST | THREAD, false);
+                    }
+                }
+                if (then != null) then.accept(ok);
+            });
+        });
     }
 
     // ------------------------------------------------------------------ a thread
@@ -510,6 +612,35 @@ final class Inbox {
         return c != null && c.aliases != null && !c.aliases.isEmpty() ? c.aliases : java.util.Collections.singletonList(conv);
     }
 
+    /**
+     * A page from the inbox in place of what's held: rows written on this phone that the inbox doesn't have yet (on
+     * their way, or waiting to be sent again) stay, and a message that arrived while the page was on its way too.
+     */
+    private List<Model.Msg> withOwn(String conv, List<Model.Msg> page, Set<String> hadBefore) {
+        List<Model.Msg> old = msgs.get(conv);
+        if (old == null || old.isEmpty()) return Model.tidy(page);
+        Set<String> keys = new HashSet<>(), seals = new HashSet<>(), cids = new HashSet<>();
+        for (Model.Msg m : page) {
+            keys.add(m.k);
+            if (!m.seal.isEmpty()) seals.add(m.seal);
+            if (!m.cid.isEmpty()) cids.add(m.cid);
+        }
+        List<Model.Msg> all = new ArrayList<>(page);
+        for (Model.Msg m : old) {
+            if (keys.contains(m.k)) continue;
+            boolean own = m.temp && !cids.contains(m.k) && (m.seal.isEmpty() || !seals.contains(m.seal));
+            boolean arrived = !m.temp && hadBefore != null && !hadBefore.contains(m.k);
+            if (own || arrived) all.add(m);
+        }
+        return Model.tidy(all);
+    }
+
+    private Set<String> keysHeld(String conv) {
+        Set<String> out = new HashSet<>();
+        for (Model.Msg m : thread(conv)) out.add(m.k);
+        return out;
+    }
+
     /** Opens a conversation: what's held here shows at once, then the inbox's newest page replaces it. */
     void openThread(String conv) {
         current = conv;
@@ -519,6 +650,13 @@ final class Inbox {
         Notifier notifier = SyncService.notifier(app);
         for (String a : knownAliases(conv)) notifier.clear(a);   // a notification filed before a merge too
         notifier.clear(conv);
+        // Opened is read: the count goes now, here and on the inbox, however the page's fetch goes.
+        Model.Conv c = convs.get(conv);
+        if (c != null && c.unread > 0) {
+            c.unread = 0;
+            tell(LIST, false);
+            markRead(conv);
+        }
         Link at = link;
         Opener o = open;
         if (at == null) return;
@@ -530,7 +668,7 @@ final class Inbox {
                 Page p = openPage(o, conv, saved, java.util.Collections.singletonList(conv));
                 main.post(() -> {
                     if (link != at || msgs.containsKey(conv)) return;
-                    msgs.put(conv, Model.tidy(p.items));
+                    msgs.put(conv, withOwn(conv, p.items, null));
                     if (conv.equals(current)) tell(THREAD, true);
                 });
             });
@@ -538,27 +676,38 @@ final class Inbox {
             tell(THREAD, true);
         }
         List<String> known = knownAliases(conv);
+        Set<String> had = keysHeld(conv);
         run(() -> fetchPage(at, o, conv, null, known), p -> {
             boolean first = !msgs.containsKey(conv);
-            msgs.put(conv, Model.tidy(p.items));
+            msgs.put(conv, withOwn(conv, p.items, had));
             cursors.put(conv, p.cursor);
             if (p.cursor == null) complete.add(conv);
             else complete.remove(conv);
             if (p.conversation != null) convs.put(conv, p.conversation);
+            if (conv.equals(pageNeeded)) pageNeeded = null;
             JSONObject raw = p.raw;
             disk.execute(() -> writeDisk(threadFile(conv), at, raw));
             // Another conversation was opened meanwhile: never drawn under that one's name.
             if (!conv.equals(current)) return;
             tell(THREAD | LIST, first);
             Model.Conv now = convs.get(conv);
-            if (now != null && now.unread > 0) {
+            if (now != null && now.unread > 0) {   // a count this phone didn't know of
                 now.unread = 0;
                 tell(LIST, false);
                 markRead(conv);
             }
         }, e -> {
-            if (conv.equals(current)) say(words(e), 3000);
+            if (!conv.equals(current)) return;
+            // Nothing held and nothing fetched: the page comes when the inbox answers again.
+            if (!msgs.containsKey(conv)) pageNeeded = conv;
+            say(words(e), 3000);
+            tell(THREAD, false);
         });
+    }
+
+    /** True while the open conversation has nothing to show because the inbox couldn't be reached. */
+    boolean pageWaiting(String conv) {
+        return conv != null && conv.equals(pageNeeded) && !msgs.containsKey(conv);
     }
 
     void closeThread() {
@@ -634,6 +783,33 @@ final class Inbox {
         return relay != null && Boolean.TRUE.equals(relay.smsFallback);
     }
 
+    /** The most a video or file sent from here can be: an MMS from the relay phone carries this much; 0 while unknown. */
+    long mmsMax() {
+        return relay != null ? relay.mmsMax : 0;
+    }
+
+    /** True while a picture from here goes through Messages on the relay phone (as it is) rather than as a shrunken MMS. */
+    boolean pictureGoesWhole() {
+        return relay != null && Boolean.TRUE.equals(relay.imageReply);
+    }
+
+    /**
+     * Why a file from this phone can't be sent, in a sentence, or null when it can. A picture always can (it's shrunk
+     * to what the way out takes); a video or file goes as MMS from the relay phone, so one bigger than that takes is
+     * refused here, before anything is uploaded.
+     */
+    String cantSend(String mime, long bytes) {
+        boolean picture = mime != null && mime.startsWith("image/") && !"image/gif".equals(mime);
+        if (picture) return null;
+        long max = mmsMax();
+        if (max > 0 && bytes > max) {
+            return (mime != null && mime.startsWith("video/") ? "Videos" : "image/gif".equals(mime) ? "GIFs" : "Files")
+                    + " go out as MMS from the relay phone, which takes up to " + Format.bytes(max) + " there. This one is " + Format.bytes(bytes) + ".";
+        }
+        if (bytes > ATTACH_MAX) return "That file is too big to send (" + Format.bytes(ATTACH_MAX + 4096) + " at most).";
+        return null;
+    }
+
     /**
      * Every conversation read: the counts go to zero here at once, the inbox is told one conversation at a time (it
      * has no word for all of them), and the notifications go. A conversation whose count the inbox still has comes
@@ -650,17 +826,7 @@ final class Inbox {
         SyncService.notifier(app).clearAll();
         if (unread.isEmpty()) return;
         tell(LIST, false);
-        Link at = link;
-        if (at == null) return;
-        io.execute(() -> {
-            for (String conv : unread) {
-                try {
-                    new Hedy(at).post("/v2/read", new JSONObject().put("conv", conv));
-                } catch (IOException | JSONException ignored) {
-                    // the next open of that conversation marks it again
-                }
-            }
-        });
+        for (String conv : unread) markRead(conv);
     }
 
     /** One conversation read, from the list. */
@@ -675,13 +841,29 @@ final class Inbox {
 
     private void markRead(String conv) {
         Link at = link;
+        if (at == null) return;
         io.execute(() -> {
+            boolean told;
             try {
                 new Hedy(at).post("/v2/read", new JSONObject().put("conv", conv));
-            } catch (IOException | JSONException ignored) {
-                // the next open marks it again
+                told = true;
+            } catch (IOException | JSONException e) {
+                told = false;
             }
+            boolean ok = told;
+            main.post(() -> {
+                if (link != at) return;
+                if (ok) readsOwed.remove(conv);
+                else readsOwed.add(conv);   // told on the next sync that gets through
+                prefs.rememberReadsOwed(readsOwed);
+            });
         });
+    }
+
+    /** Reads the inbox wasn't told of (the calls failed), told now that it answers. */
+    private void settleReads() {
+        if (readsOwed.isEmpty()) return;
+        for (String conv : new ArrayList<>(readsOwed)) markRead(conv);
     }
 
     List<Model.Msg> thread(String conv) {
@@ -693,16 +875,22 @@ final class Inbox {
         return cursors.get(conv) != null;
     }
 
-    /** The page before the oldest one held. `then` gets how many messages came in front. */
+    /** The page before the oldest one held. `then` gets how many messages came in front, or -1 when it couldn't be fetched; it always hears. */
     void loadEarlier(Done<Integer> then) {
         String conv = current;
         String cursor = conv != null ? cursors.get(conv) : null;
-        if (conv == null || cursor == null) return;
+        if (conv == null || cursor == null) {
+            if (then != null) then.done(0);
+            return;
+        }
         Link at = link;
         Opener o = open;
         List<String> known = knownAliases(conv);
         run(() -> fetchPage(at, o, conv, cursor, known), p -> {
-            if (!cursor.equals(cursors.get(conv))) return;   // reloaded meanwhile
+            if (!cursor.equals(cursors.get(conv))) {   // reloaded meanwhile
+                if (then != null) then.done(0);
+                return;
+            }
             List<Model.Msg> have = msgs.containsKey(conv) ? msgs.get(conv) : new ArrayList<>();
             Set<String> keys = new HashSet<>();
             for (Model.Msg m : have) keys.add(m.k);
@@ -714,8 +902,11 @@ final class Inbox {
             msgs.put(conv, tidied);
             cursors.put(conv, p.cursor);
             if (p.cursor == null) complete.add(conv);
-            if (conv.equals(current) && then != null) then.done(tidied.size() - before);
-        }, e -> say(words(e), 3000));
+            if (then != null) then.done(tidied.size() - before);
+        }, e -> {
+            say(words(e), 3000);
+            if (then != null) then.done(-1);
+        });
     }
 
     /** The rest of a conversation's history, so search and the details cover all of it. */
@@ -766,9 +957,10 @@ final class Inbox {
         Link at = link;
         Opener o = open;
         List<String> known = knownAliases(conv);
+        Set<String> had = keysHeld(conv);
         run(() -> fetchPage(at, o, conv, null, known), p -> {
             if (!conv.equals(current)) return;
-            msgs.put(conv, Model.tidy(p.items));
+            msgs.put(conv, withOwn(conv, p.items, had));
             cursors.put(conv, p.cursor);
             if (p.cursor == null) complete.add(conv);
             else complete.remove(conv);
@@ -817,6 +1009,11 @@ final class Inbox {
     static final long ATTACH_MAX = 25L * 1024 * 1024 - 4096;
     /** A picture bigger than this (or wider) also goes up as a small preview, so threads load it quickly. */
     private static final int PREVIEW_FROM_BYTES = 300 * 1024, PREVIEW_FROM_SIDE = 1280, PREVIEW_SIDE = 960;
+    /**
+     * A picture on its way out as MMS is shrunk to this before it's sealed (the relay phone shrinks it again to the
+     * carrier's few hundred kilobytes), so a 12 MB photo doesn't take a minute to upload on a slow line for nothing.
+     */
+    static final int SEND_SIDE = 1600, SEND_QUALITY = 85, SEND_WHOLE_BELOW = 600 * 1024;
 
     void send(String conv, String text) {
         send(conv, text, null);
@@ -828,18 +1025,41 @@ final class Inbox {
      * sealed request, which it fetches and sends on as the text (PROTOCOL.md, Replies).
      */
     void send(String conv, String text, Attachment att) {
+        send(conv, text, att, null, 0);
+    }
+
+    /**
+     * The same, as a message this phone wrote before (`cid`, its row's id) going out again: the inbox knows a message
+     * by its device's id, so one whose answer was lost on the way back is the same message, never a second one.
+     */
+    private void send(String conv, String text, Attachment att, String cid, int tries) {
         String t = text == null ? "" : text.trim();
         if ((t.isEmpty() && att == null) || conv == null || link == null) return;
         long now = System.currentTimeMillis();
+        Link at = link;
         Model.Msg temp = new Model.Msg();
-        temp.k = "tmp:" + now + ":" + Crypto.hex(Crypto.random(3));
+        temp.k = cid != null ? cid : "tmp:" + now + ":" + Crypto.hex(Crypto.random(3));
+        temp.cid = temp.k;
         temp.conv = conv;
         temp.dir = "out";
         temp.status = "queued";
         temp.text = t;
         temp.ts = now;
         temp.temp = true;
-        temp.seal = "";
+        temp.tries = tries + 1;
+        // How the inbox's copy will name itself, so the two are one row here from the moment it arrives, answer or no
+        // answer: a file by its time and fingerprint, a plain text by its seal (made here, now, and sent as it is).
+        String fp = att != null ? at.fpId(Crypto.hex(Crypto.random(8))) : null;
+        String plainE = null;
+        if (att != null) temp.seal = "m:out:" + Opener.stemOf(now, fp);
+        else {
+            try {
+                plainE = at.seal(new JSONObject().put("text", t).put("ts", now), Crypto.aadMessage(conv, "out"));
+            } catch (JSONException e) {
+                throw new IllegalStateException(e);
+            }
+            temp.seal = "e:" + plainE.substring(plainE.length() - 22);
+        }
         if (att != null) {
             temp.media = new Model.Media();
             temp.media.mime = att.mime;
@@ -850,14 +1070,15 @@ final class Inbox {
         if (arr == null) msgs.put(conv, arr = new ArrayList<>());
         arr.add(temp);
         tell(THREAD, true);
-        Link at = link;
         String[] from = started.get(conv);
         String to = from != null ? from[0] : null;
         String called = from != null && !from[1].isEmpty() ? from[1] : to != null ? Numbers.pretty(to) : "";
+        outbox.put(temp, att, to);   // kept on this phone until the inbox has it, so a restart doesn't lose it
+        String sealedText = plainE;
         run(() -> {
             JSONObject shown = new JSONObject().put("text", t).put("ts", now);
             JSONObject request = new JSONObject().put("text", t).put("n", Crypto.b64u(Crypto.random(16))).put("ts", now);
-            JSONObject body = new JSONObject().put("conv", conv);
+            JSONObject body = new JSONObject().put("conv", conv).put("cid", temp.k);
             if (to != null) {
                 // A conversation started here: the request names the number (inside the seal, so only the relay phone
                 // reads it), and the inbox gets the conversation's name in case it doesn't have the conversation yet.
@@ -866,11 +1087,27 @@ final class Inbox {
             }
             String mime = "";
             if (att != null) {
-                byte[] plain = media.readLocal(att.uri, ATTACH_MAX);
                 mime = att.mime;
+                boolean picture = mime.startsWith("image/") && !"image/gif".equals(mime);
+                // A picture is read whole whatever its size, then shrunk when the way out would shrink it anyway. A
+                // video or file goes as MMS from the relay phone, so one bigger than that takes stops here.
+                long mms = mmsMax();
+                long cap = picture ? Media.MAX_BYTES : mms > 0 ? Math.min(ATTACH_MAX, mms) : ATTACH_MAX;
+                byte[] plain;
+                try {
+                    plain = media.readLocal(att.uri, cap);
+                } catch (IOException e) {
+                    throw "too big".equals(e.getMessage()) && !picture && cap < ATTACH_MAX ? new IOException("too big for mms") : e;
+                }
+                if (picture && (plain.length > ATTACH_MAX || (!pictureGoesWhole() && plain.length > SEND_WHOLE_BELOW))) {
+                    byte[] small = Media.shrink(plain, SEND_SIDE, SEND_QUALITY);
+                    if (small != null && small.length < plain.length) {
+                        plain = small;
+                        mime = "image/jpeg";
+                    } else if (plain.length > ATTACH_MAX) throw new IOException("too big");
+                }
                 int[] wh = mime.startsWith("image/") ? Media.size(plain) : new int[] { 0, 0 };
-                // Its files are named by a fingerprint this phone makes up, as the relay phone names its own.
-                String fp = at.fpId(Crypto.hex(Crypto.random(8)));
+                // Its files are named by a fingerprint this phone made up (as the relay phone names its own).
                 String path = new Hedy(at).upload(conv, fp, now, "original", keep(at, conv, now, fp, "original", plain));
                 if (path.isEmpty()) throw new IOException("the inbox didn't say where it stored the file");
                 JSONObject where = new JSONObject().put("path", path);
@@ -880,8 +1117,19 @@ final class Inbox {
                         String preview = new Hedy(at).upload(conv, fp, now, "preview", keep(at, conv, now, fp, "preview", small));
                         if (!preview.isEmpty()) where.put("preview", preview);
                     }
+                } else if (mime.startsWith("video/")) {
+                    // A frame of the video as its preview, so every device shows a picture of it (as the relay phone does).
+                    Media.Poster poster = media.poster(att.uri);
+                    if (poster != null) {
+                        String preview = new Hedy(at).upload(conv, fp, now, "preview", keep(at, conv, now, fp, "preview", poster.jpeg));
+                        if (!preview.isEmpty()) {
+                            where.put("preview", preview);
+                            wh = new int[] { poster.w, poster.h };
+                        }
+                    }
                 }
                 JSONObject about = new JSONObject().put("mime", mime).put("w", wh[0]).put("h", wh[1]).put("bytes", plain.length);
+                temp.media.mime = mime;
                 shown.put("fp", fp).put("media", about);
                 request.put("media", new JSONObject().put("path", path).put("mime", mime).put("bytes", plain.length).put("name", att.name));
                 body.put("media", where);
@@ -891,14 +1139,15 @@ final class Inbox {
                 temp.media.path = path;
                 temp.media.preview = where.optString("preview", null);
             }
-            // How every inbox device shows it: a message this device sent, at this time.
-            body.put("e", at.seal(shown, Crypto.aadMessage(conv, "out")))
+            // How every inbox device shows it: a message this device sent, at this time (a plain text was sealed up front).
+            body.put("e", sealedText != null ? sealedText : at.seal(shown, Crypto.aadMessage(conv, "out")))
                     // What the relay phone acts on: for this conversation alone, with a nonce and the time (PROTOCOL.md, Replies).
                     .put("o", at.seal(request, Crypto.aadOut(conv)))
                     .put("mt", at.matchToken("out", t, mime));
             return new Hedy(at).post("/v2/send", body);
         }, r -> {
             String id = r.optString("id", "");
+            outbox.remove(temp.cid);
             List<Model.Msg> list = msgs.get(conv);
             if (list != null && !id.isEmpty()) {
                 boolean already = false;
@@ -907,9 +1156,10 @@ final class Inbox {
                 else {
                     temp.k = id;
                     temp.temp = false;
+                    if (r.optBoolean("again") && r.opt("status") instanceof String) temp.status = r.optString("status");
                 }
             }
-            if (!id.isEmpty()) pendingOut.add(id);
+            if (!id.isEmpty() && "queued".equals(temp.status)) pendingOut.add(id);
             unsent.remove(conv);   // the inbox has the conversation now
             Model.Conv c = convs.get(conv);
             if (c != null) {
@@ -923,10 +1173,35 @@ final class Inbox {
             }
             tell(THREAD | LIST, conv.equals(current));
         }, e -> {
+            List<Model.Msg> list = msgs.get(conv);
+            if (list != null && !list.contains(temp)) {
+                outbox.remove(temp.cid);   // the inbox's copy replaced this row meanwhile: it got there after all
+                return;
+            }
             temp.status = "failed";
-            temp.code = e instanceof IOException && "too big".equals(e.getMessage()) ? "too_big_here" : "local";
+            String why = e instanceof IOException && e.getMessage() != null ? e.getMessage() : "";
+            temp.code = "too big".equals(why) ? "too_big_here" : "too big for mms".equals(why) ? "too_big_mms"
+                    : "out of memory".equals(why) ? "too_big_here"
+                    : e instanceof Hedy.ApiException ? "refused" : e instanceof IOException ? "offline" : "local";
+            if ("offline".equals(temp.code)) outbox.keep(temp);   // tried again by itself once the inbox answers
+            else outbox.remove(temp.cid);
             tell(THREAD, false);
         });
+    }
+
+    /** True while a failed row of this phone's own is one it will send again by itself (the inbox couldn't be reached). */
+    static boolean waitsForConnection(Model.Msg m) {
+        return m != null && m.temp && "failed".equals(m.status) && "offline".equals(m.code) && m.tries < SEND_TRIES;
+    }
+
+    /** How many times a text goes out by itself before it waits for a tap. */
+    static final int SEND_TRIES = 3;
+
+    /** Rows that couldn't reach the inbox, sent again now that it answers (each the same message, by its id). */
+    private void retryWaiting() {
+        List<Model.Msg> again = new ArrayList<>();
+        for (List<Model.Msg> list : msgs.values()) for (Model.Msg m : list) if (waitsForConnection(m)) again.add(m);
+        for (Model.Msg m : again) sendAgain(m);
     }
 
     /** Seals a file for its conversation and message, keeps the sealed copy here (so it shows without a download), and returns it. */
@@ -943,14 +1218,29 @@ final class Inbox {
         send(target.conv, Words.reactionText(emoji, to, Words.kindOf(target.media), remove), null);
     }
 
-    /** A reply that didn't go out, written again as a new one (an attachment is read from this phone again). */
+    /**
+     * A reply that didn't go out, sent again. A row written here goes as the same message (its id); one the inbox has
+     * (the relay phone couldn't send it) goes as a new one, and the old row stops offering to retry.
+     */
     void sendAgain(Model.Msg m) {
         if (m == null || !m.out() || m.unchecked || (m.text.isEmpty() && (m.media == null || m.media.localUri == null))) return;
+        if (!m.temp && retried.contains(m.k)) return;
         List<Model.Msg> list = msgs.get(m.conv);
         if (list != null && m.temp) list.remove(m);
+        if (!m.temp) {
+            retried.add(m.k);
+            prefs.rememberRetried(m.k);
+        }
         Attachment again = m.media != null && m.media.localUri != null
                 ? new Attachment(android.net.Uri.parse(m.media.localUri), m.media.mime, "file", m.media.bytes) : null;
-        send(m.conv, m.text, again);
+        send(m.conv, m.text, again, m.temp ? m.cid : null, m.temp ? m.tries : 0);
+    }
+
+    /** Messages the inbox has as failed that were sent again from here: their rows don't offer to retry a second time. */
+    final Set<String> retried = new HashSet<>();
+
+    boolean wasRetried(Model.Msg m) {
+        return m != null && !m.temp && retried.contains(m.k);
     }
 
     // ------------------------------------------------------------------ the arrival log
@@ -964,6 +1254,22 @@ final class Inbox {
             int i = -1;
             for (int j = 0; j < arr.size(); j++) if (arr.get(j).k.equals(m.k)) { i = j; break; }
             if (i < 0) {
+                // A row written on this phone, as the inbox has it (by the id this phone gave it, or by its seal): the
+                // inbox's copy takes the row's place, with the file this phone still has for it.
+                int own = -1;
+                for (int j = 0; j < arr.size(); j++) {
+                    Model.Msg t = arr.get(j);
+                    if (t.temp && ((!m.cid.isEmpty() && m.cid.equals(t.k)) || (!m.seal.isEmpty() && m.seal.equals(t.seal)))) { own = j; break; }
+                }
+                if (own >= 0) {
+                    Model.Msg was = arr.remove(own);
+                    if (m.media != null && was.media != null && was.media.localUri != null) m.media.localUri = was.media.localUri;
+                    outbox.remove(was.cid);
+                    arr.add(m);
+                    arr.sort(Model.BY_TIME);
+                    if (m.out() && !"queued".equals(m.status)) pendingOut.remove(m.k);
+                    return true;
+                }
                 // The same sealed message again, under another key: shown once (the copy that opens, if one doesn't).
                 int twin = -1;
                 if (!m.seal.isEmpty()) for (int j = 0; j < arr.size(); j++) if (arr.get(j).seal.equals(m.seal)) { twin = j; break; }
@@ -975,6 +1281,9 @@ final class Inbox {
                 arr.sort(Model.BY_TIME);
                 changed = added = true;
             } else if (!(!"queued".equals(arr.get(i).status) && "queued".equals(m.status)) && !arr.get(i).same(m)) {
+                // The same key filed as someone's text and as this phone's (one copy from the thread, one from the
+                // feed, by a server that changed its mind about who said it): nobody's words here, either way round.
+                if (!arr.get(i).dir.equals(m.dir) && !arr.get(i).temp) m = Opener.asUnchecked(m);
                 arr.set(i, m);   // a sent or failed status never goes back to queued
                 // What the server put under this key may be another message's copy: still each message once, in order.
                 List<Model.Msg> tidied = Model.tidy(arr);
@@ -998,7 +1307,7 @@ final class Inbox {
             changed = added = true;
         }
         if (m.out() && !"queued".equals(m.status)) pendingOut.remove(m.k);
-        if (added && !m.out() && !m.read && m.conv.equals(current) && "thread".equals(view)) markRead(m.conv);
+        if (added && !m.out() && !m.read && reading(m.conv)) markRead(m.conv);
         return changed;
     }
 
@@ -1006,7 +1315,7 @@ final class Inbox {
     boolean mergeConversation(Model.Conv c) {
         if (c == null || c.conv.isEmpty()) return false;
         Model.Conv next = c.copy();
-        if (c.conv.equals(current) && "thread".equals(view)) next.unread = 0;
+        if (reading(c.conv)) next.unread = 0;
         unsent.remove(c.conv);
         Model.Conv cur = convs.get(c.conv);
         if (cur != null && cur.sameSummary(next)) return false;
@@ -1030,7 +1339,11 @@ final class Inbox {
     }
 
     void sync() {
-        if (syncing || link == null || !visible) return;
+        if (link == null || !visible) return;
+        if (syncing) {
+            ringPending = true;
+            return;
+        }
         syncing = true;
         Link at = link;
         Opener o = open;
@@ -1091,12 +1404,14 @@ final class Inbox {
             return out;
         }, out -> {
             syncing = false;
+            lastSyncAt = System.currentTimeMillis();
+            unreached = null;
             if (out.inbox != null) applyInbox(out.inbox);
             Map<String, Integer> counts = new HashMap<>();
-            if (out.inbox != null) for (Model.Conv c : out.inbox.items) counts.put(c.conv, c.unread);
-            for (Round r : out.rounds) for (Model.Conv c : r.convs) counts.put(c.conv, c.unread);
+            if (out.inbox != null) for (Model.Conv c : out.inbox.items) counts.put(c.conv, c.filtered ? 0 : c.unread);
+            for (Round r : out.rounds) for (Model.Conv c : r.convs) counts.put(c.conv, c.filtered ? 0 : c.unread);   // Filtered: nothing to show
             if (!counts.isEmpty()) SyncService.notifier(app).unread(counts);
-            boolean touched = false;
+            boolean touched = false, touchedOpen = false;
             String reopen = null;
             for (Round r : out.rounds) {
                 if (r.startOver) {
@@ -1104,8 +1419,8 @@ final class Inbox {
                     reloadEverything(null);
                     return;
                 }
-                for (Model.Msg m : r.items) if (mergeMessage(m)) touched = true;
-                for (Model.Conv c : r.convs) if (mergeConversation(c)) touched = true;
+                for (Model.Msg m : r.items) if (mergeMessage(m)) { touched = true; if (m.conv.equals(current)) touchedOpen = true; }
+                for (Model.Conv c : r.convs) if (mergeConversation(c)) { touched = true; if (c.conv.equals(current)) touchedOpen = true; }
                 // Filled in by a full-history sync: what's held here for those conversations is out of date.
                 for (String conv : r.reload) {
                     if (conv.equals(current) && ("thread".equals(view) || "details".equals(view))) reopen = conv;
@@ -1118,15 +1433,34 @@ final class Inbox {
                 if (r.cursor != null) feed = r.cursor;
                 if (r.relay != null) relay = r.relay;
             }
-            tell(RELAY | (touched ? LIST | (current != null && "thread".equals(view) && !finding ? THREAD : 0) : 0), false);
+            tell(RELAY | (touched ? LIST : 0) | (touchedOpen && "thread".equals(view) && !finding ? THREAD : 0), false);
             if (reopen != null) reloadThread(reopen);
             if (!pendingOut.isEmpty() && current != null) refreshPending();
             torDown(false);
+            // The inbox answers: what it was owed while it didn't.
+            settleReads();
+            retryWaiting();
+            if (pageWaiting(current)) openThread(current);
+            if (ringPending) {
+                ringPending = false;
+                sync();
+            }
         }, e -> {
             syncing = false;
             torDown(e instanceof Tor.Down);
+            if (!loadedInbox) {
+                unreached = words(e);
+                tell(LIST, false);
+            }
+            if (ringPending) {
+                ringPending = false;
+                main.postDelayed(this::sync, 2_000);
+            }
         });
     }
+
+    /** Why the list couldn't be loaded the first time (the inbox couldn't be reached), or null. */
+    String unreached;
 
     /** Tor is on but isn't running here, so nothing reaches the inbox (the list says so, and how to fix it). */
     volatile boolean torDown;
@@ -1141,8 +1475,16 @@ final class Inbox {
     void reloadEverything(Runnable then) {
         String was = current;
         String shown = view;
+        // Rows written here that the inbox doesn't have yet stay, under their conversations.
+        Map<String, List<Model.Msg>> own = new HashMap<>();
+        for (Map.Entry<String, List<Model.Msg>> e : msgs.entrySet()) {
+            List<Model.Msg> keep = new ArrayList<>();
+            for (Model.Msg m : e.getValue()) if (m.temp) keep.add(m);
+            if (!keep.isEmpty()) own.put(e.getKey(), keep);
+        }
         convs.clear();
         msgs.clear();
+        msgs.putAll(own);
         cursors.clear();
         complete.clear();
         feed = null;
@@ -1259,7 +1601,7 @@ final class Inbox {
                     reconnecting = false;
                     tell(RELAY, false);
                     say(Boolean.FALSE.equals(r.listening)
-                            ? "The relay phone answered, but it still isn't reading Messages. Open Relay on it."
+                            ? "The relay phone answered, but it still isn't reading Messages. Open Paigr Relay on it."
                             : "The relay phone is connected.", 4000);
                     return;
                 }
@@ -1372,7 +1714,7 @@ final class Inbox {
             if (msgs.containsKey(c.conv)) continue;
             String conv = c.conv;
             List<String> aliases = c.aliases;
-            run(() -> fetchPage(at, o, conv, null, aliases), p -> {
+            runOn(ahead, () -> fetchPage(at, o, conv, null, aliases), p -> {
                 if (msgs.containsKey(conv)) return;
                 msgs.put(conv, Model.tidy(p.items));
                 cursors.put(conv, p.cursor);

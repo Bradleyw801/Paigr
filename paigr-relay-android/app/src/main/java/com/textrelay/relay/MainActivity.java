@@ -129,9 +129,6 @@ public class MainActivity extends Activity {
         TextView title = ui.label("Paigr Relay", 27f, Ui.BLACK, ui.text);
         title.setLetterSpacing(-0.025f);
         top.addView(title);
-        LinearLayout.LayoutParams betaLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        betaLp.setMarginStart(ui.dp(9));
-        top.addView(ui.tag("BETA", Ui.BRAND.base), betaLp);
         top.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
         top.addView(ui.iconButton(R.drawable.ic_gear, "More", ui.text, v -> startActivity(new Intent(this, MoreActivity.class))));
         col.addView(top);
@@ -148,6 +145,15 @@ public class MainActivity extends Activity {
                 // What it says to do: start Tor (or get Orbot), from right here
                 if (Tor.orbotInstalled(this)) Tor.startOrbot(this);
                 else Tor.getOrbot(this);
+                return;
+            }
+            ComponentName listener = new ComponentName(this, RelayListenerService.class);
+            if (!relay.listening && System.currentTimeMillis() - relay.listenerLostAt > LISTENER_GRACE_MS
+                    && getSystemService(NotificationManager.class).isNotificationListenerAccessGranted(listener)) {
+                // Granted, but Android hasn't connected the listener: asked to, now
+                Watchdog.rebind(this, listener);
+                Toast.makeText(this, "Asked Android to reconnect notifications.", Toast.LENGTH_SHORT).show();
+                refresh();
                 return;
             }
             details.setVisibility(details.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
@@ -239,6 +245,9 @@ public class MainActivity extends Activity {
         refresh();
     }
 
+    /** How long the listener may be unbound (after a grant, a restart, or Android dropping it) before the card says so. */
+    static long LISTENER_GRACE_MS = 30_000;
+
     void refresh() {
         long now = System.currentTimeMillis();
         NotificationManager nm = getSystemService(NotificationManager.class);
@@ -269,9 +278,15 @@ public class MainActivity extends Activity {
             word = "Paused";
             line = "Turn on notification access below";
             light = 0xFFFFD27A;
+        } else if (!relay.listening && now - relay.listenerLostAt > LISTENER_GRACE_MS) {
+            // Android normally binds the listener within seconds of access being granted; a longer gap is a dropped one.
+            word = "Not reading texts";
+            line = "Reconnecting to notifications. Tap to try now.";
+            light = 0xFFFFD27A;
+            trying = true;
         } else if (linked && !prefs.verified()) {
             word = "Connecting";
-            line = "Waiting for the first check-in";
+            line = relay.lastError != null ? relay.lastError : "Waiting for the first check-in";
             trying = true;
         } else if (relay.lastError != null && !relay.doorbellConnected() && now - relay.lastSync > 5 * 60_000L) {
             word = "Can't reach the inbox";
@@ -280,7 +295,7 @@ public class MainActivity extends Activity {
             trying = true;
         } else {
             word = "Relaying";
-            line = relay.lastRelayed > 0 ? "Last text " + Text.ago(relay.lastRelayed, now) : "Ready for the next text";
+            line = relay.lastNewText > 0 ? "Last text " + Text.ago(relay.lastNewText, now) : "Ready for the next text";
         }
         heroWord.setText(word);
         heroLine.setText(line);
@@ -548,8 +563,8 @@ public class MainActivity extends Activity {
                 String problem = null;
                 try {
                     if (!pl.recovered) {
-                        pl.recovered = true;
                         got = relay.recover();
+                        pl.recovered = true;   // the inbox answered (a link, or none): no asking again
                     }
                     if (got == null) {
                         if (pl.code == null || pl.secrets == null) {

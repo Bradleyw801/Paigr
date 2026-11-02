@@ -21,6 +21,7 @@ import android.util.Log;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -30,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 /**
  * The relay itself: texts go up to the inbox server, from Messages' notifications as they arrive and from the phone's
@@ -37,7 +39,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * replies come back down and out through Google Messages.
  */
 final class Relay {
-    static final String VERSION = "0.9";
+    static final String VERSION = BuildConfig.VERSION_NAME;
     private static final String TAG = "Relay";
     /** Server errors in a row on one attachment before the media lane lets it go (the text is already in the inbox). */
     static final int MEDIA_GIVE_UP = 6;
@@ -55,6 +57,8 @@ final class Relay {
     static synchronized void reset() {
         if (instance != null) instance.shutdown();
         instance = null;
+        smsWaitMs = 50;   // the tests' stand-in radio never answers for an SMS: no waiting for it
+        StoreSync.SETTLE_MS = StoreSync.SETTLE_DEFAULT_MS;
     }
 
     final Prefs prefs;
@@ -72,6 +76,12 @@ final class Relay {
     private Doorbell doorbell;
 
     volatile boolean listening;
+    /** When the notification listener last went away (or this process started without it): how long the gap has been. */
+    volatile long listenerLostAt = System.currentTimeMillis();
+    /** When the listener last connected: a text from before that may have had a notification this process never saw. */
+    volatile long listenerSince;
+    /** When a Messages notification was last seen (kept across restarts): a sign that Messages' notifications work. */
+    volatile long lastNotified;
     volatile long lastRelayed;
     /** When Android last hid a Messages notification from Relay as a one-time code; 0 if it hasn't since Relay started. */
     volatile long lastHidden;
@@ -105,14 +115,38 @@ final class Relay {
         this.outbound = new Outbound(context);
         this.store = new Store(context);
         this.conversations = new Conversations(context, prefs);
+        this.conversations.watchContacts();
         this.storeSync = new StoreSync(context, this, store);
         this.historySync = new HistorySync(context, this, store);
         this.mediaReader = Media.reader(context);
+        this.lastNotified = prefs.lastNotified();
         conversations.onFold = (from, into) -> outbound.rewriteConv(from, into);
         // A link copied here with the app's data from another phone is dropped before anything uses it (Prefs.link).
         if (prefs.link() == null && prefs.takeLinkCopied()) lastError = LINK_COPIED;
+        sweepStash();
         textLane.start();
         mediaLane.start();
+        watchNetwork();
+    }
+
+    /** The network coming back (Wi-Fi again, or mobile data): what waited for it goes now, not at the next backoff. */
+    private void watchNetwork() {
+        try {
+            android.net.ConnectivityManager cm = context.getSystemService(android.net.ConnectivityManager.class);
+            if (cm == null) return;
+            cm.registerDefaultNetworkCallback(new android.net.ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(android.net.Network network) {
+                    textLane.wake();
+                    mediaLane.wake();
+                    wakePoller();
+                    Doorbell d = doorbell;
+                    if (d != null) d.reconnect();
+                }
+            });
+        } catch (RuntimeException e) {
+            Log.w(TAG, "no network callback: " + e.getMessage());   // the backoffs still get there
+        }
     }
 
     private static final String LINK_COPIED = "This phone's link to your inbox came from another phone, so it was dropped. Open Paigr Relay to link this phone.";
@@ -284,6 +318,7 @@ final class Relay {
         if (!Parser.MESSAGES_PACKAGE.equals(sbn.getPackageName())) return -1;
         Parser.Snapshot s = Parser.parse(sbn);
         if (s == null) return -1;
+        noteNotified();
         if (s.hidden) return onHidden(s);
         String conv = conversations.forNotification(s, storeSync.allowed() ? this::threadOf : null);
         if (s.reply != null) replyHandles.put(conv, s.reply);
@@ -297,17 +332,29 @@ final class Relay {
         for (Parser.Msg m : s.messages) {
             if (m.time != 0 && m.time < floor) continue;           // history from before Relay was installed
             if (m.self && m.time == 0) continue;                    // a reply without a time can't be matched to its copies
+            if (m.text.isEmpty() && m.dataUri == null) continue;    // nothing in it (a kind of content Messages couldn't show)
             boolean seen = !prefs.markSeen(conv, m.fingerprint());
             if (!seen) prefs.noteRecent(conv, m.self, m.time, m.text);
             // Sent again only when the inbox can recognise it (a real timestamp) and there is no file to upload twice.
             if (seen && !(resend && m.time != 0 && m.dataUri == null)) continue;
-            fresh.add(item(s, conv, m));
+            JSONObject it = item(s, conv, m);
+            if (m.dataUri != null) stash(it, m.dataUri, m.mime);
+            fresh.add(it);
         }
         if (fresh.isEmpty()) return 0;
         int added = outbound.add(fresh);
+        if (added > 0 && !resend) lastNewText = System.currentTimeMillis();
         textLane.wake();
         mediaLane.wake();
         return added;
+    }
+
+    /** Messages posted a notification: remembered (now and then on disk) as proof its notifications reach this app. */
+    private void noteNotified() {
+        long now = System.currentTimeMillis();
+        long was = lastNotified;
+        lastNotified = now;
+        if (now - was > 5 * 60_000L) prefs.setLastNotified(now);
     }
 
     /**
@@ -353,6 +400,71 @@ final class Relay {
             put(it, "dataUri", m.dataUri.toString());
         }
         return it;
+    }
+
+    /**
+     * A copy of an attachment, taken while this phone may still read it: Android lets a notification's files be read
+     * only while that notification is up, and the upload comes later (the queue, a lost connection, a restart). One
+     * too big for the inbox keeps only its poster and size. What can't be read now is left to the upload to try.
+     */
+    private void stash(JSONObject it, Uri uri, String mime) {
+        File dir = stashDir();
+        String stem = Parser.hash(it.optString("id"), 12);
+        try {
+            byte[] bytes = Media.readAll(context.getContentResolver(), uri);
+            File f = new File(dir, stem + ".bin");
+            Files.writeAll(f, bytes);
+            put(it, "file", f.getPath());
+        } catch (Media.TooBig big) {
+            put(it, "bytes", big.bytes);
+            if (Media.normalize(mime).startsWith("video/")) {
+                Media.Blob poster = Media.poster(context, uri);
+                if (poster != null) {
+                    File p = new File(dir, stem + ".poster");
+                    try {
+                        Files.writeAll(p, poster.bytes);
+                        put(it, "posterFile", p.getPath());
+                        put(it, "posterW", poster.w);
+                        put(it, "posterH", poster.h);
+                    } catch (IOException ignored) {
+                        // the size still says what it was
+                    }
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "attachment not copied now: " + e.getMessage());   // read at upload time, if it can be then
+        }
+    }
+
+    private File stashDir() {
+        File d = new File(context.getFilesDir(), "attach");
+        if (!d.isDirectory()) //noinspection ResultOfMethodCallIgnored
+            d.mkdirs();
+        return d;
+    }
+
+    /** The copies kept for items that are done with (delivered, or dropped). */
+    private void unstash(List<JSONObject> done) {
+        for (JSONObject it : done) {
+            for (String key : new String[] { "file", "posterFile" }) {
+                String p = it.optString(key, "");
+                if (!p.isEmpty()) //noinspection ResultOfMethodCallIgnored
+                    new File(p).delete();
+            }
+        }
+    }
+
+    /** Copies nothing in the queue refers to any more (a crash between delivery and cleanup), swept at startup. */
+    private void sweepStash() {
+        File[] files = stashDir().listFiles();
+        if (files == null) return;
+        java.util.Set<String> held = new java.util.HashSet<>();
+        for (JSONObject it : outbound.snapshot()) {
+            held.add(it.optString("file", ""));
+            held.add(it.optString("posterFile", ""));
+        }
+        for (File f : files) if (!held.contains(f.getPath())) //noinspection ResultOfMethodCallIgnored
+            f.delete();
     }
 
     /**
@@ -413,6 +525,11 @@ final class Relay {
      * attachment goes up only if the inbox says it still needs it; without, the inbox learns only what kind it was.
      */
     List<JSONObject> storeItems(Store.Msg m, String conv, boolean history, boolean withMedia) {
+        return storeItems(m, conv, history, withMedia, false);
+    }
+
+    /** With quiet, the text is one Messages kept to itself (its spam folder): the inbox files its conversation under Filtered. */
+    List<JSONObject> storeItems(Store.Msg m, String conv, boolean history, boolean withMedia, boolean quiet) {
         List<JSONObject> out = new ArrayList<>();
         boolean group = Boolean.TRUE.equals(prefs.group(conv));
         String name = prefs.name(conv);
@@ -433,6 +550,7 @@ final class Relay {
                     "fp", Parser.hash("p|" + m.key() + (i > 0 ? "|" + i : ""), 8));
             if (m.failed) put(it, "status", "failed");
             if (history) put(it, "history", true);
+            if (quiet && i == 0 && !m.out) put(it, "quiet", true);
             if (i < m.media.size()) {
                 Store.Part p = m.media.get(i);
                 put(it, "mime", Media.normalize(p.mime));
@@ -466,8 +584,37 @@ final class Relay {
         return done;
     }
 
+    /** When each conversation was last reported read from a notification Messages took down, so a cancel-and-repost says it once. */
+    private final Map<String, Long> readReported = new ConcurrentHashMap<>();
+
+    /**
+     * Messages took a conversation's notification down because it was opened here (or marked read): the conversation
+     * is read up to its newest text, and the inbox hears so (it clears the count once its newest message is that old,
+     * PROTOCOL.md). A conversation this phone doesn't know yet says nothing.
+     */
+    void onNotificationRead(StatusBarNotification sbn) {
+        Parser.Snapshot s = Parser.parse(sbn);
+        if (s == null || s.hidden || s.messages.isEmpty()) return;
+        String conv = conversations.knownForNotification(s);
+        if (conv == null) return;
+        long readTs = 0;
+        for (Parser.Msg m : s.messages) if (!m.self) readTs = Math.max(readTs, m.time);
+        if (readTs == 0) return;
+        Long last = readReported.get(conv);
+        if (last != null && last >= readTs) return;
+        readReported.put(conv, readTs);
+        if (readReported.size() > 500) readReported.clear();
+        JSONObject reads = new JSONObject();
+        put(reads, conv, readTs);
+        queueFromStore(new ArrayList<>(), reads);
+    }
+
+    /** When a text last came in or went out through this phone (not a resync or history batch): what the card shows. */
+    volatile long lastNewText;
+
     /** Queues what a check of the message store found, and which conversations were read on this phone. */
     void queueFromStore(List<JSONObject> items, JSONObject reads) {
+        for (JSONObject it : items) if (!it.optBoolean("history")) lastNewText = Math.max(lastNewText, System.currentTimeMillis());
         List<JSONObject> all = new ArrayList<>(items);
         if (reads.length() > 0) all.add(Json.obj("id", "reads:" + System.currentTimeMillis(), "reads", reads));
         if (all.isEmpty()) return;
@@ -537,8 +684,7 @@ final class Relay {
             JSONObject w = wire(it);
             if (it.has("dataUri")) put(w, "media", it.optBoolean("skipUpload")
                     ? Json.obj("mime", Media.normalize(it.optString("mime")))
-                    : mediaFor(it.optString("conv"), it.optString("fp"), it.optLong("ts"),
-                            Uri.parse(it.optString("dataUri")), it.optString("mime", "application/octet-stream")));
+                    : mediaFor(it));
             items.put(w);
             byFp.put(it.optString("fp"), it);
             if (!"store".equals(it.optString("src"))) put(replyable, it.optString("conv"), replyHandles.containsKey(it.optString("conv")));
@@ -559,7 +705,7 @@ final class Relay {
     }
 
     /** One item as the inbox reads it. */
-    private static JSONObject wire(JSONObject it) {
+    private JSONObject wire(JSONObject it) {
         JSONObject w = Json.obj(
                 "conv", it.optString("conv"),
                 "name", it.optString("name"),
@@ -572,11 +718,12 @@ final class Relay {
                 "fp", it.optString("fp"));
         if (it.optBoolean("read")) put(w, "read", true);
         if (it.optBoolean("history")) put(w, "history", true);
+        if (it.optBoolean("quiet") && hedy() instanceof Hedy2) put(w, "quiet", true);   // a private inbox files it under Filtered
         if (it.has("status")) put(w, "status", it.optString("status"));
         if (it.has("mime") && !it.has("dataUri")) {
             put(w, "media", Json.obj("mime", it.optString("mime")));
-            // Only what the inbox can store is offered; the rest stays on this phone and is named for what it was.
-            if (it.has("partUri") && Media.sendable(it.optString("mime"))) put(w, "wantMedia", true);
+            // Only what the inbox can store is offered (a private inbox keeps anything); the rest stays on this phone, named for what it was.
+            if (it.has("partUri") && (hedy() instanceof Hedy2 || Media.sendable(it.optString("mime")))) put(w, "wantMedia", true);
         }
         return w;
     }
@@ -588,8 +735,13 @@ final class Relay {
     void uploadNow(JSONObject job) throws IOException {
         JSONObject it = job.optJSONObject("item");
         if (it == null || job.optBoolean("skipUpload")) return;   // given up on: the message is in the inbox without it
-        JSONObject media = mediaFor(it.optString("conv"), it.optString("fp"), it.optLong("ts"), Uri.parse(job.optString("uploadUri")),
-                job.optString("mime", "application/octet-stream"));
+        JSONObject from = new JSONObject();
+        put(from, "conv", it.optString("conv"));
+        put(from, "fp", it.optString("fp"));
+        put(from, "ts", it.optLong("ts"));
+        put(from, "dataUri", job.optString("uploadUri"));
+        put(from, "mime", job.optString("mime", "application/octet-stream"));
+        JSONObject media = mediaFor(from);
         if (!media.has("path")) return;
         JSONObject w = wire(it);
         w.remove("wantMedia");
@@ -598,30 +750,58 @@ final class Relay {
         lastRelayed = System.currentTimeMillis();
     }
 
-    /** Uploads the untouched original plus a small preview; when that can't happen, the inbox still learns what it was. */
-    private JSONObject mediaFor(String conv, String fp, long ts, Uri uri, String mime) {
+    /**
+     * Uploads the untouched original plus a small preview; when that can't happen, the inbox still learns what it was.
+     * A file too big for the inbox (Media.MAX_BYTES) goes up as its preview and size alone, and stays on this phone.
+     */
+    private JSONObject mediaFor(JSONObject it) {
+        String conv = it.optString("conv"), fp = it.optString("fp"), mime = it.optString("mime", "application/octet-stream");
+        long ts = it.optLong("ts");
         JSONObject media = Json.obj("mime", mime);
         Media.Prepared p;
         try {
-            Media.Reader reader = mediaReader;
-            if (reader == null) throw new IOException("no attachment reader");
-            p = reader.read(uri, mime);
+            if (!it.optString("file", "").isEmpty()) {
+                // The copy taken when the notification came (its grant is long gone by now).
+                p = Media.prepare(Files.readAll(new File(it.optString("file"))), mime);
+                if (p.preview == null && p.original.mime.startsWith("video/")) {
+                    Media.Blob poster = Media.poster(context, Uri.fromFile(new File(it.optString("file"))));
+                    if (poster != null) p = new Media.Prepared(new Media.Blob(p.original.bytes, p.original.mime, poster.w, poster.h), poster);
+                }
+            } else if (it.optLong("bytes") > Media.MAX_BYTES) {
+                // Too big for the inbox: only its poster (if one was kept) and size go up.
+                Media.Blob poster = it.optString("posterFile", "").isEmpty() ? null
+                        : new Media.Blob(Files.readAll(new File(it.optString("posterFile"))), "image/jpeg", it.optInt("posterW"), it.optInt("posterH"));
+                p = new Media.Prepared(null, poster, it.optLong("bytes"));
+            } else {
+                Media.Reader reader = mediaReader;
+                if (reader == null) throw new IOException("no attachment reader");
+                p = reader.read(Uri.parse(it.optString("dataUri")), mime);
+            }
         } catch (IOException | RuntimeException e) {
             lastMediaError = "Could not read an attachment (" + e.getMessage() + ")";
             return media;   // the grant from the notification is gone (restart), or the file is unreadable
         }
-        if (!Media.storable(p.original.mime)) {
+        if (p.original != null && hedy() instanceof Hedy && !(hedy() instanceof Hedy2) && !Media.storable(p.original.mime)) {
+            // The first version's inbox kept only a few types; a private inbox stores sealed bytes of anything.
             lastMediaError = "The inbox can't store " + p.original.mime + " attachments; they stay on this phone";
             return media;
         }
         try {
-            String path = hedy().uploadMedia(conv, fp, ts, "original", p.original.mime, p.original.bytes);
-            put(media, "mime", p.original.mime);
-            put(media, "path", path);
-            put(media, "bytes", p.original.bytes.length);
-            if (p.original.w > 0 && p.original.h > 0) {
-                put(media, "w", p.original.w);
-                put(media, "h", p.original.h);
+            if (p.original != null) {
+                String path = hedy().uploadMedia(conv, fp, ts, "original", p.original.mime, p.original.bytes);
+                put(media, "mime", p.original.mime);
+                put(media, "path", path);
+                put(media, "bytes", p.original.bytes.length);
+                if (p.original.w > 0 && p.original.h > 0) {
+                    put(media, "w", p.original.w);
+                    put(media, "h", p.original.h);
+                }
+            } else {
+                put(media, "bytes", p.bytes);   // too big for the inbox: the thread says how big, and where it is
+                if (p.preview != null && p.preview.w > 0 && p.preview.h > 0) {
+                    put(media, "w", p.preview.w);
+                    put(media, "h", p.preview.h);
+                }
             }
             if (p.preview != null) {
                 put(media, "preview", hedy().uploadMedia(conv, fp, ts, "preview", p.preview.mime, p.preview.bytes));
@@ -702,6 +882,7 @@ final class Relay {
                 try {
                     deliver(batch);
                     outbound.remove(batch);
+                    unstash(batch);
                     lastError = null;
                     backoff = laneBackoffMs;
                     serverFailures = 0;
@@ -723,8 +904,29 @@ final class Relay {
                 } catch (Hedy.ApiException e) {
                     lastError = "Server: " + e.getMessage();
                     if (e.refused()) {
-                        outbound.remove(batch);   // the server will never take these; don't wedge the queue behind them
-                        Log.w(TAG, "dropped " + batch.size() + " item(s): " + e.getMessage());
+                        // The server will never take this as it is. One item alone is dropped; a batch is tried one
+                        // item at a time, so one odd item (or an over-full request) doesn't take the rest with it.
+                        if (batch.size() == 1) {
+                            outbound.remove(batch);
+                            unstash(batch);
+                            Log.w(TAG, "dropped an item: " + e.getMessage());
+                        } else {
+                            for (JSONObject one : batch) {
+                                List<JSONObject> alone = java.util.Collections.singletonList(one);
+                                try {
+                                    deliver(alone);
+                                    outbound.remove(alone);
+                                    unstash(alone);
+                                } catch (Hedy.ApiException again) {
+                                    if (!again.refused()) break;   // not the item's fault: the queue waits
+                                    outbound.remove(alone);
+                                    unstash(alone);
+                                    Log.w(TAG, "dropped an item: " + again.getMessage());
+                                } catch (IOException | RuntimeException again) {
+                                    break;
+                                }
+                            }
+                        }
                         continue;
                     }
                     if (e.keyRejected()) backoff = 60_000;
@@ -772,7 +974,9 @@ final class Relay {
                 }
             } catch (Hedy.ApiException e) {
                 if (e.code == 404) {
-                    prefs.mergeTried(m.from, m.into, false, now, now + 5 * 60_000L);   // the inbox doesn't have `into` yet
+                    // The inbox doesn't have `into` (yet): waited for, up to a day; one it never gets is given up on.
+                    if (m.added > 0 && now - m.added > 86_400_000L) prefs.removeMerge(m.from, m.into);
+                    else prefs.mergeTried(m.from, m.into, false, now, now + 5 * 60_000L);
                     continue;
                 }
                 if (e.refused()) {
@@ -806,7 +1010,26 @@ final class Relay {
     }
 
     /** Fetches queued replies, sends each through Messages' own reply action, and reports back. Returns the poll interval. */
+    /** The listener has read what Messages shows since this process started (its reply handles are back). */
+    private volatile long rescannedAt;
+    private final long startedAt = System.currentTimeMillis();
+    /** One poller at a time through the outbox: two (after a restart of the connections) would report each other's sends. */
+    private final Object outboxLock = new Object();
+
+    void rescanned() {
+        rescannedAt = System.currentTimeMillis();
+    }
+
     int processOutbox(Hedy hedy) throws IOException {
+        // Right after a start, the reply handles come back with the listener's first read of what's on screen: a reply
+        // polled before that would go as SMS (or be refused for a group) when Messages could have sent it.
+        if (rescannedAt == 0 && listening && System.currentTimeMillis() - startedAt < 15_000) return 2;
+        synchronized (outboxLock) {
+            return processOutboxNow(hedy);
+        }
+    }
+
+    private int processOutboxNow(Hedy hedy) throws IOException {
         JSONObject r = hedy.outbox();
         checkWake(r.optLong("wake", 0), r.optString("wakeKind", "reconnect"), false);
         JSONArray items = r.optJSONArray("items");
@@ -845,7 +1068,9 @@ final class Relay {
                         if (!to.isEmpty()) conv = conversations.started(conv, to);
                         // A conversation this phone folded into another (its own merge, maybe not on the inbox yet)
                         // is answered through the one it went into.
+                        sendingId = id;
                         SendResult result = sendReply(prefs.foldedInto(conv), item.optString("text"), item.optJSONObject("media"), hedy);
+                        sendingId = null;
                         report = Json.obj("id", id, "status", result.sent ? "sent" : "failed", "canReply", result.canReply, "via", result.via);
                         if (!result.sent) {
                             put(report, "code", result.code);
@@ -855,12 +1080,31 @@ final class Relay {
                     }
                     prefs.setOutboxReport(id, report);
                 }
-                hedy.outboxResult(report);
+                try {
+                    hedy.outboxResult(report);
+                } catch (Hedy.ApiException e) {
+                    // The inbox won't take this report (the message folded away, or was removed): nothing to report any
+                    // more, and the replies after it on the page go on.
+                    if (!(e.refused() || e.code == 404)) throw e;
+                    Log.w(TAG, "report not taken for " + id + ": " + e.code);
+                }
                 prefs.clearOutboxReport(id);
             }
         }
         lastSync = System.currentTimeMillis();
         return Math.max(3, Math.min(60, r.optInt("pollSeconds", 20)));
+    }
+
+    /** The outbox id of the reply being sent right now (one at a time, under outboxLock), for a late word from the carrier. */
+    private volatile String sendingId;
+
+    /** A reply reported failed went out after all (the carrier's late answer): the inbox hears so. */
+    private void correctReport(String id, String conv) {
+        try {
+            hedy().outboxResult(Json.obj("id", id, "status", "sent", "canReply", replyHandles.containsKey(conv), "via", "mms"));
+        } catch (IOException | RuntimeException e) {
+            Log.w(TAG, "late MMS result not reported: " + e.getMessage());
+        }
     }
 
     /**
@@ -938,7 +1182,11 @@ final class Relay {
             SmsManager sms = SmsManager.getDefault();
             Mms.Part part = Mms.fit(bytes, mime, text, Mms.limits(sms));
             if (part == null) return new SendResult(false, NotSent.TOO_BIG, canReply, "mms");
-            Mms.Outcome outcome = Mms.send(context, sms, Mms.sendRequest(numbers, part, text));
+            String id = sendingId;
+            Mms.Outcome outcome = Mms.send(context, sms, Mms.sendRequest(numbers, part, text), sent -> {
+                // The carrier answered after the wait: the reply was reported failed, and went after all.
+                if (sent && id != null) background("mms-late", () -> correctReport(id, conv));
+            });
             if (!outcome.sent) Mms.log("MMS not sent: " + Mms.describe(outcome));
             return outcome.sent ? new SendResult(true, null, canReply, "mms") : new SendResult(false, NotSent.MMS_FAILED, canReply, "mms");
         } catch (IOException | RuntimeException e) {
@@ -979,12 +1227,67 @@ final class Relay {
         try {
             @SuppressWarnings("deprecation")   // the default subscription is the right one on a single-SIM relay phone
             SmsManager sms = SmsManager.getDefault();
-            sms.sendMultipartTextMessage(number, null, smsParts(text), null, null);
+            ArrayList<String> parts = smsParts(sms, text);
+            // The radio says whether each part went (airplane mode, no service, the network's no): a plain no is
+            // reported as not sent; no word within the wait is taken as sent, as a text usually is by then.
+            int n = SMS_SEQ.incrementAndGet() & 0x7FFFFFFF;
+            String action = ACTION_SMS_SENT + "." + n;
+            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(parts.size());
+            int[] error = { android.app.Activity.RESULT_OK };
+            android.content.BroadcastReceiver r = new android.content.BroadcastReceiver() {
+                @Override
+                public void onReceive(Context c, Intent i) {
+                    int code = getResultCode();
+                    if (code != android.app.Activity.RESULT_OK && error[0] == android.app.Activity.RESULT_OK) error[0] = code;
+                    done.countDown();
+                }
+            };
+            android.content.IntentFilter filter = new android.content.IntentFilter(action);
+            if (Build.VERSION.SDK_INT >= 33) context.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED);
+            else context.registerReceiver(r, filter);
+            try {
+                ArrayList<PendingIntent> sentIntents = new ArrayList<>();
+                for (int part = 0; part < parts.size(); part++) {
+                    Intent sent = new Intent(action).setPackage(context.getPackageName()).putExtra("part", part);
+                    sentIntents.add(PendingIntent.getBroadcast(context, n * 16 + part, sent, PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_IMMUTABLE));
+                }
+                sms.sendMultipartTextMessage(number, null, parts, sentIntents, null);
+                done.await(smsWaitMs, TimeUnit.MILLISECONDS);
+                if (error[0] != android.app.Activity.RESULT_OK) {
+                    Log.w(TAG, "SMS fallback refused by the radio: " + error[0]);
+                    return new SendResult(false, NotSent.SMS_FAILED, false, "sms");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            } finally {
+                try {
+                    context.unregisterReceiver(r);
+                } catch (RuntimeException ignored) {
+                    // already gone
+                }
+            }
             return new SendResult(true, null, false, "sms");
         } catch (RuntimeException e) {
             Log.w(TAG, "SMS fallback failed", e);   // the details stay on this phone
             return new SendResult(false, NotSent.SMS_FAILED, false, "sms");
         }
+    }
+
+    private static final String ACTION_SMS_SENT = "com.textrelay.relay.SMS_SENT";
+    private static final java.util.concurrent.atomic.AtomicInteger SMS_SEQ = new java.util.concurrent.atomic.AtomicInteger((int) (System.currentTimeMillis() & 0xFFFF));
+    /** How long to wait for the radio's word on an SMS before taking it as sent (tests shorten it). */
+    static long smsWaitMs = 30_000;
+
+    /** The text in the segments the carrier wants (the phone's own rule, 153 or 67 characters by alphabet), never empty. */
+    static ArrayList<String> smsParts(SmsManager sms, String text) {
+        ArrayList<String> parts = null;
+        try {
+            parts = sms.divideMessage(text);
+        } catch (RuntimeException ignored) {
+            // the fixed split below
+        }
+        if (parts == null || parts.isEmpty()) parts = smsParts(text);
+        return parts;
     }
 
     /** Segments short enough for any alphabet (67 UCS-2 characters), so the carrier always reassembles them. */
@@ -1202,6 +1505,8 @@ final class Relay {
                 "queued", outbound.size(),
                 "doorbell", doorbellConnected(),
                 "smsFallback", canSendSms(),
+                "mmsMax", mmsMax(),
+                "imageReply", imageReply(),
                 "battery", battery,
                 "charging", charging,
                 "version", VERSION,
@@ -1213,6 +1518,34 @@ final class Relay {
         JSONObject r = hedy.heartbeat(body);
         lastHeartbeat = System.currentTimeMillis();
         checkWake(r.optLong("wake", 0), r.optString("wakeKind", "reconnect"), false);
+    }
+
+    /** The most an MMS from this phone can carry, in bytes; 0 while it can't send any (no SMS permission). */
+    int mmsMax() {
+        if (!canSendSms()) return 0;
+        try {
+            @SuppressWarnings("deprecation")   // the default subscription is the right one on a single-SIM relay phone
+            SmsManager sms = SmsManager.getDefault();
+            return Math.max(0, Mms.limits(sms)[0] - Mms.OVERHEAD);
+        } catch (RuntimeException e) {
+            return 0;
+        }
+    }
+
+    /** True while Messages' reply action takes pictures, so one from a device goes through it (as RCS) instead of as MMS. */
+    boolean imageReply() {
+        for (Notification.Action action : replyHandles.values()) if (takesPictures(action)) return true;
+        return false;
+    }
+
+    static boolean takesPictures(Notification.Action action) {
+        RemoteInput[] inputs = action == null ? null : action.getRemoteInputs();
+        for (RemoteInput input : inputs != null ? inputs : new RemoteInput[0]) {
+            java.util.Set<String> types = input.getAllowedDataTypes();
+            if (types == null) continue;
+            for (String t : types) if (android.content.ClipDescription.compareMimeTypes("image/jpeg", t)) return true;
+        }
+        return false;
     }
 
     /** Tests only: waits until everything queued has been delivered. */

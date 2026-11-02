@@ -15,6 +15,9 @@ const ST = "v2-state";        // <tid>/relay, /viewer, /epoch, /wake, /push, /in
 
 const FEED_TTL_SECONDS = 3 * 86400;
 const FEED_SKEW_MS = 15000;
+/** A device's own id for a reply it sent (`cid`): remembered this long, so sending it again after a lost answer finds it. */
+const CID_TTL_SECONDS = 6 * 3600;
+const CID_RE = /^[A-Za-z0-9:_-]{4,64}$/;
 const READ_SLACK_MS = 2000;
 const MERGE_BUDGET_MS = 4500;
 const OFFER_MS = 15 * 60000;
@@ -91,6 +94,7 @@ const AUTHED = {
   "GET /v2/sync": ["inbox", sync],
   "POST /v2/send": ["inbox", send],
   "POST /v2/read": ["inbox", markRead],
+  "POST /v2/filter": ["inbox", setFiltered],
   "GET /v2/status": ["inbox", status],
   "POST /v2/push/register": ["inbox", pushRegister],
   "POST /v2/push/test": ["inbox", pushTest],
@@ -321,6 +325,11 @@ async function tenantDevices(ctx, tid) {
 /** Takes a device out of its inbox, with what it left behind: its wrap, the invite it is showing, its push subscriptions. */
 async function removeDevice(ctx, id, rec, tid) {
   await ctx.data.delete(DEV, id);
+  if (rec && rec.role === "relay" && TID_RE.test(rec.tid || "")) {
+    // Its status goes with it: no "offline" notice for a phone that was taken out, and devices see no relay phone.
+    await ctx.data.delete(ST, P(rec.tid, "relay"));
+    await ctx.data.delete(ST, P(rec.tid, "wake"));
+  }
   if (rec && rec.wrap) {
     const w = await ctx.data.get(WRAP, rec.wrap);
     if (w && w.dev === id) await ctx.data.delete(WRAP, rec.wrap);
@@ -478,6 +487,10 @@ async function ingest(ctx, me, body) {
     if (out) { value.via = "phone"; value.sentAt = ts; }
     if (it.history) value.history = true;
     if (!out && (it.history || it.read)) value.read = true;
+    // The relay phone found this text in the phone's message store with no notification from Messages for it, while
+    // notifications were working: Messages filed it as spam (or keeps the conversation quiet). Devices file it under
+    // Filtered, PROTOCOL.md, Filtered conversations.
+    if (!out && value.src === "store" && it.quiet === true && !value.history) value.quiet = true;
     const entry = { v: value, want: !!it.wantMedia && !!value.media, result: { fp, k } };
     const first = byKey.get(k);
     if (first) entry.same = first;
@@ -520,6 +533,10 @@ async function ingest(ctx, me, body) {
     edits.get(target.k).push(fn);
   };
   let folded = 0, known = 0;
+  // What Messages on the relay phone made of each conversation just now: a quiet text files it under Filtered; a text
+  // Messages notified about takes it back out, unless a device's owner decided for themselves.
+  const quietConvs = new Set();
+  const noisyConvs = new Set();
   for (const entry of byKey.values()) {
     const v = entry.v, res = entry.result;
     let target = held.get(v.k) || (aliasTo.has(v.k) ? near.get(aliasTo.get(v.k)) : null);
@@ -537,6 +554,11 @@ async function ingest(ctx, me, body) {
             t.from = [...new Set((t.from || [srcOf(t)]).concat(v.src))];
             if (!(t.twins || []).includes(v.k)) t.twins = (t.twins || []).concat(v.k).slice(-8);
           });
+          if (v.dir === "in" && v.src === "notif" && target.quiet) {
+            // Its notification came after all (late): not a quiet text, and the conversation isn't Filtered for it.
+            edit(target, t => { delete t.quiet; });
+            noisyConvs.add(target.conv);
+          }
           aliases.push({ key: P(tid, v.k), value: { to: target.k, conv: target.conv } });
           res.status = "folded";
         }
@@ -579,17 +601,20 @@ async function ingest(ctx, me, body) {
   const unreadByConv = new Map();
   for (const v of fresh) {
     if (v.dir === "in" && !v.read) unreadByConv.set(v.conv, (unreadByConv.get(v.conv) || 0) + 1);
+    if (v.dir === "in" && !v.history) (v.quiet ? quietConvs : v.src === "notif" ? noisyConvs : new Set()).add(v.conv);
     const prev = latestByConv.get(v.conv);
     if (!prev || v.ts >= prev.ts) latestByConv.set(v.conv, v);
   }
+  const filteredConvs = new Set();
+  const restood = new Set();   // conversations whose standing changed without a message of their own to carry it
   // A name a conversation got from any of these messages, newest first.
   const namesByConv = new Map();
   for (const v of [...fresh].sort((a, b) => b.ts - a.ts)) if (v.ne && !namesByConv.has(v.conv)) namesByConv.set(v.conv, v.ne);
   for (const [conv, last] of latestByConv) {
-    await updateConv(ctx, tid, conv, existing => {
+    const wrote = await updateConv(ctx, tid, conv, existing => {
       const newer = !existing || last.ts >= (existing.lastTs || 0);
       const named = namesByConv.get(conv);
-      return Object.assign({}, existing || {}, {   // keeps what else it holds (the relay phone's merge records)
+      const next = Object.assign({}, existing || {}, {   // keeps what else it holds (the relay phone's merge records)
         conv,
         ne: newer ? (last.ne || named || (existing && existing.ne) || null) : ((existing && existing.ne) || named || null),
         lastTs: newer ? last.ts : existing.lastTs,
@@ -601,7 +626,31 @@ async function ingest(ctx, me, body) {
         imported: !!(existing && existing.imported),
         updatedAt: now
       });
+      if (next.filteredBy !== "user") {
+        if (quietConvs.has(conv) && !noisyConvs.has(conv)) { next.filtered = true; next.filteredBy = "relay"; next.filteredAt = now; }
+        else if (noisyConvs.has(conv) && next.filtered) { next.filtered = false; delete next.filteredBy; next.filteredAt = now; }
+      }
+      return next;
     });
+    if (wrote && wrote.filtered) filteredConvs.add(conv);
+  }
+  // A conversation whose standing changed without a new message of its own (a late notification folded in).
+  for (const conv of new Set([...quietConvs, ...noisyConvs])) {
+    if (latestByConv.has(conv)) continue;
+    const wrote = await updateConv(ctx, tid, conv, existing => {
+      if (!existing || existing.filteredBy === "user") return null;
+      const want = quietConvs.has(conv) && !noisyConvs.has(conv);
+      if (!!existing.filtered === want) return null;
+      existing.filtered = want;
+      if (want) existing.filteredBy = "relay"; else delete existing.filteredBy;
+      existing.filteredAt = now;
+      existing.updatedAt = now;
+      return existing;
+    });
+    if (wrote) {
+      latestByConv.set(conv, null);
+      restood.add(conv);
+    }
   }
 
   // Reply handles can appear or vanish without a new message, and a conversation read on the relay phone is read here.
@@ -635,8 +684,8 @@ async function ingest(ctx, me, body) {
   const historyConvs = [...new Set(logged.filter(v => v.history).map(v => v.conv))];
   const loggedConvs = new Set(logged.map(v => v.conv));
   await feedAdd(ctx, tid, live.concat(historyConvs.map(conv => ({ k: "t:" + conv, conv, touch: true })))
-    .concat([...readHere].filter(conv => !loggedConvs.has(conv)).map(seenEntry)));
-  await notify(ctx, tid, fresh.filter(v => v.dir === "in" && !v.read));
+    .concat([...new Set([...readHere, ...restood])].filter(conv => !loggedConvs.has(conv)).map(seenEntry)));
+  await notify(ctx, tid, fresh.filter(v => v.dir === "in" && !v.read && !filteredConvs.has(v.conv)));
   if (logged.length || latestByConv.size) {
     const lastKey = live.length ? live[live.length - 1].k : null;
     await doorbell(ctx, tid, "i", "messages", { k: lastKey, convs: [...new Set([...latestByConv.keys()].concat(logged.map(v => v.conv)))] });
@@ -758,9 +807,12 @@ function findTwin(v, candidates) {
     if ((y.from || [srcOf(y)]).includes(v.src)) continue;
     if (y.mt !== token) continue;
     let gap;
-    if (y.dir === "out" && srcOf(y) === "texts" && y.status === "queued") {
-      if (v.ts < y.ts - 60000 || v.ts - y.ts > 2 * 86400000) continue;
-      gap = v.ts - y.ts;
+    if (y.dir === "out" && srcOf(y) === "texts") {
+      // A reply from a device, timed by the server; its copy from the relay phone is timed by that phone's clock,
+      // which may be minutes off either way, and the phone may send it up to two days later (queued, then sent).
+      const at = y.sentAt || y.ts;
+      if (v.ts < Math.min(y.ts, at) - 10 * 60000 || v.ts - Math.max(y.ts, at) > 2 * 86400000) continue;
+      gap = Math.abs(v.ts - at);
     } else {
       const at = y.dir === "out" ? (y.sentAt || y.ts) : y.ts;
       gap = Math.abs(at - v.ts);
@@ -788,15 +840,18 @@ function srcOf(m) {
 async function merge(ctx, me, body) {
   const tid = me.tid;
   const from = convId(body.from);
-  const into = convId(body.into);
+  let into = convId(body.into);
   if (!from || !into || from === into) throw bad("from and into required");
+  // `into` may itself have been merged on since (the relay phone repeats every merge once): the same merge, where it went.
+  into = await homeOf(ctx, tid, into);
+  if (into === from) return json(200, { ok: true, moved: 0, folded: 0, more: false });
   const target = await ctx.data.get(CONV, P(tid, into));
   if (!target) return json(404, { error: "unknown conversation" });
   // The relay phone seals its record afresh on every call (and runs every merge once more later): once the tombstone
   // says `from` went into `into` and holds the record an earlier call kept, the one sent now is that same merge's, and
   // not news to any device.
   const tomb = await ctx.data.get(ST, P(tid, "merged:" + from));
-  const same = !!(tomb && tomb.into === into);
+  const same = !!(tomb && (tomb.into === into || await homeOf(ctx, tid, convId(tomb.into) || tomb.into) === into));
   const kept = same ? sealed(tomb.rec) : null;
   const record = kept ? null : sealed(body.mr);
   const recorded = record ? await addMerged(ctx, tid, into, [record]) : false;
@@ -815,7 +870,7 @@ async function merge(ctx, me, body) {
   };
   const started = Date.now();
   const near = nearby(ctx, tid, started);
-  let moved = 0, folded = 0;
+  let moved = 0, folded = 0, foldedUnread = 0;
   while (Date.now() - started < MERGE_BUDGET_MS) {
     const r = await ctx.data.query(MSG, "by-conv", { eq: P(tid, from), order: "asc", limit: 25 });
     if (!r.items.length) break;
@@ -842,6 +897,7 @@ async function merge(ctx, me, body) {
         await ctx.data.batchPut(TWINS, copies.map(k => ({ key: P(tid, k), value: { to: twin.k, conv: into } })));
         await ctx.data.delete(MSG, P(tid, v.k));
         folded++;
+        if (v.dir === "in" && !v.read) foldedUnread++;
         progress = true;
       } else {
         const next = Object.assign({}, v, { conv: into, cv: P(tid, into) });
@@ -874,7 +930,8 @@ async function merge(ctx, me, body) {
         t.lastMedia = !!source.lastMedia;
       }
       if (!t.ne && source.ne) t.ne = source.ne;
-      t.unread = (t.unread || 0) + (source.unread || 0);
+      // Copies folded into messages already here were counted in both: once is right.
+      t.unread = Math.max(0, (t.unread || 0) + (source.unread || 0) - foldedUnread);
       // what vouched for conversations merged into `from` vouches for them here too
       t.merged = mergedList(t.merged, source.merged, [kept || record].filter(Boolean));
       t.updatedAt = Date.now();
@@ -1077,6 +1134,10 @@ async function heartbeat(ctx, me, body) {
   if (Number.isFinite(body.wakeHandled) && body.wakeHandled > 0) rec.wakeHandled = Math.floor(body.wakeHandled);
   // Whether the relay phone may send SMS itself: devices then know a reply needn't wait for an open notification.
   if (typeof body.smsFallback === "boolean") rec.smsFallback = body.smsFallback;
+  // What a file from a device can become on the way out: an MMS of at most this many bytes, or, while Messages' reply
+  // takes pictures, a picture through Messages itself. Devices say up front what will and won't go, and shrink pictures.
+  if (Number.isFinite(body.mmsMax)) rec.mmsMax = Math.max(0, Math.floor(body.mmsMax));
+  if (typeof body.imageReply === "boolean") rec.imageReply = body.imageReply;
   const store = storeOf(body.store);
   if (store) rec.store = store;
   await ctx.data.put(ST, P(tid, "relay"), rec);
@@ -1107,7 +1168,7 @@ function storeOf(s) {
 
 async function inbox(ctx, me) {
   const tid = me.tid;
-  const feed = "f:" + pad13(Date.now());
+  const feed = "f:" + pad13(Date.now() - FEED_SKEW_MS);   // the first sync covers what lands just before this answer
   const all = [];
   let cursor = null;
   for (let page = 0; page < 20; page++) {
@@ -1148,11 +1209,10 @@ async function feedSince(ctx, tid, cursor) {
   if (Date.now() - Number(cursor.slice(2, 15)) > FEED_TTL_SECONDS * 1000 - 6 * 3600000) {
     return { items: [], convs: [], cursor: "f:" + pad13(Date.now()), more: false, reset: true };
   }
+  // An entry's place in the log is the time its request computed before writing, so one can land after a device
+  // read past it (two requests at once). Devices never pass the last FEED_SKEW_MS: what's younger than that is read
+  // again until it ages out, and they take each entry once by its key.
   const latest = new Map();
-  const late = await ctx.data.list(FEED, {
-    keyPrefix: P(tid, "f:"), startAfter: P(tid, "f:" + pad13(Number(cursor.slice(2, 15)) - FEED_SKEW_MS)), endBefore: P(tid, cursor), order: "desc", limit: 50
-  });
-  for (const i of late.items.reverse()) if (i.value && i.value.k) latest.set(i.value.k, i.value);
   let next = cursor;
   let more = false;
   let page = { cursor: null };
@@ -1164,6 +1224,11 @@ async function feedSince(ctx, tid, cursor) {
     }
     more = !!page.cursor;
     if (!more) break;
+  }
+  if (!more) {
+    const floor = "f:" + pad13(Date.now() - FEED_SKEW_MS);
+    if (next > floor) next = floor;
+    if (next < cursor) next = cursor;
   }
   const reload = [...new Set([...latest.values()].filter(v => v.touch).map(v => v.conv))];
   const seen = [...latest.values()].filter(v => v.seen).map(v => v.conv);
@@ -1189,6 +1254,16 @@ async function send(ctx, me, body) {
   const e = sealed(body.e);
   const o = sealed(body.o);
   if (!conv || !e || !o) throw bad("conv, e and o required");
+  // A device's own id for the message (its optimistic row): a request sent again after a lost answer is the same
+  // message, not a second one, and every device matches the stored copy to that row by it.
+  const cid = typeof body.cid === "string" && CID_RE.test(body.cid) ? body.cid : null;
+  if (cid) {
+    const before = await ctx.data.get(ST, P(tid, "cid:" + cid));
+    if (before && before.id) {
+      const held = await ctx.data.get(MSG, P(tid, before.id));
+      return json(200, { id: before.id, canReply: before.canReply !== false, again: true, status: held ? held.status : undefined });
+    }
+  }
   // A conversation the relay phone merged away: the reply goes to the one it went into (the relay phone opens a
   // request sealed for a conversation it merged, see PROTOCOL.md, Merges).
   conv = await homeOf(ctx, tid, conv);
@@ -1204,6 +1279,7 @@ async function send(ctx, me, body) {
   const k = "m:" + pad13(now) + ":o" + rid();
   const value = { k, conv, cv: P(tid, conv), qs: P(tid, "queued"), dir: "out", status: "queued", e, o, ts: now, createdAt: now, src: "texts" };
   if (typeof body.mt === "string" && MT_RE.test(body.mt)) value.mt = body.mt;
+  if (cid) value.cid = cid;
   if (c.ne) value.ne = c.ne;
   // An attachment this device stored first (sealed, under this inbox and conversation): the relay phone fetches it
   // from the path inside the sealed request; every inbox device from the message's record.
@@ -1228,6 +1304,7 @@ async function send(ctx, me, body) {
       return cur;
     });
   }
+  if (cid) await ctx.data.put(ST, P(tid, "cid:" + cid), { id: k, canReply: c.canReply !== false }, { ttlSeconds: CID_TTL_SECONDS });
   await feedAdd(ctx, tid, [value]);
   await touchViewer(ctx, tid, true);
   await doorbell(ctx, tid, "o", "queued", { id: k, conv: value.conv });
@@ -1265,8 +1342,34 @@ async function markRead(ctx, me, body) {
 }
 
 /**
- * A conversation was read (on the relay phone, or on a device): the log carries the conversation's summary to every
- * device, unread count included, without a message and without asking anyone to reload it.
+ * A device's owner moves a conversation into Filtered or back to the inbox. Their word stands: the relay phone's
+ * reading of Messages (a quiet text, a notified one) no longer moves it. Every device hears through the log.
+ */
+async function setFiltered(ctx, me, body) {
+  const conv = convId(body.conv);
+  if (!conv) throw bad("conv required");
+  if (typeof body.filtered !== "boolean") throw bad("filtered required");
+  const now = Date.now();
+  const wrote = await updateConv(ctx, me.tid, conv, c => {
+    if (!c) return null;
+    if (!!c.filtered === body.filtered && c.filteredBy === "user") return null;
+    c.filtered = body.filtered;
+    c.filteredBy = "user";
+    c.filteredAt = now;
+    c.updatedAt = now;
+    return c;
+  });
+  if (wrote) {
+    await feedAdd(ctx, me.tid, [seenEntry(conv)]);
+    await doorbell(ctx, me.tid, "i", "messages", { k: null, convs: [conv] });
+  }
+  return json(200, { ok: true, filtered: wrote ? !!wrote.filtered : body.filtered });
+}
+
+/**
+ * A conversation was read (on the relay phone, or on a device), or filed differently: the log carries the
+ * conversation's summary to every device, unread count included, without a message and without asking anyone to
+ * reload it.
  */
 function seenEntry(conv) {
   return { k: "r:" + conv + ":" + Date.now().toString(36), conv, seen: true };

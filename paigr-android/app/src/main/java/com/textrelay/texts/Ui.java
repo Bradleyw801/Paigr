@@ -203,7 +203,7 @@ final class Ui {
         return t;
     }
 
-    /** A small rounded tag in white letters on a pill of the given colour, like the BETA beside the app's name. */
+    /** A small rounded tag in white letters on a pill of the given colour. */
     TextView tag(String text, int fill) {
         TextView t = label(text, 10f, HEAVY, 0xFFFFFFFF);
         t.setLetterSpacing(0.09f);

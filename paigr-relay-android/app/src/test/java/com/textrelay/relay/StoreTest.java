@@ -195,6 +195,130 @@ public class StoreTest {
         assertEquals(2, server.calls("/api/relay/media").size());
     }
 
+    // ------------------------------------------------------------------ what Messages kept quiet
+
+    /** Messages' notifications work, the phone is idle, and a listener is up: the usual relay phone at home. */
+    private void idleAtHome(long now) throws Exception {
+        relay.listening = true;
+        relay.listenerSince = now - 10 * MIN;
+        relay.storeSync.interactiveForTests = false;
+        relay.onNotification(conversation("pat", "Pat", false, person("Pat", "tel:+18015550300"), "Running late", now - 5 * MIN));
+        relay.drain();
+    }
+
+    @Test
+    public void aTextMessagesFiledAsSpamGoesUpQuietAfterAWaitForItsNotification() throws Exception {
+        long now = System.currentTimeMillis();
+        StoreSync.SETTLE_MS = 400;
+        idleAtHome(now);
+        int before = server.calls("/api/relay/ingest").size();
+        // A text from a number Messages took for spam: it reached the store, and Messages posted nothing for it.
+        phone.thread(21, "+18015550999");
+        phone.sms(21, "+18015550999", now - 100, 1, false, "You have won a prize, claim it now");
+        assertEquals("held while its notification may still come", 0, relay.storeSync.scanNow(0, false));
+        Thread.sleep(600);
+        assertEquals(1, relay.storeSync.scanNow(0, false));
+        relay.drain();
+        JSONObject spam = find(items("/api/relay/ingest"), "You have won a prize, claim it now");
+        assertEquals("store", spam.getString("src"));
+        assertEquals("in", spam.getString("dir"));
+        assertEquals(before + 1, server.calls("/api/relay/ingest").size());
+        if (v2()) {
+            assertTrue("filed as a text Messages kept quiet", spam.getBoolean("quiet"));
+            // the flag reaches the server as it is (plain, like read and history), on the text alone
+            JSONObject raw = server.calls("/api/relay/ingest").get(before).getJSONObject("_raw").getJSONArray("items").getJSONObject(0);
+            assertTrue(raw.getBoolean("quiet"));
+        } else {
+            assertFalse("the first version's inbox has no Filtered: the text goes up as any other", spam.has("quiet"));
+        }
+
+        // Its notification does come, late: the store copy that follows isn't quiet.
+        phone.sms(21, "+18015550999", now + 200, 1, false, "Second try");
+        relay.onNotification(conversation("spam", "(801) 555-0999", false, person("(801) 555-0999", null), "Second try", now + 300));
+        relay.drain();
+        relay.storeSync.scanNow(0, false);
+        relay.drain();
+        JSONObject second = find(items("/api/relay/ingest"), "Second try", "store");
+        assertFalse(second.has("quiet"));
+    }
+
+    /** A store text's first sight, the settle window, and the check after it: what the inbox then gets for it. */
+    private JSONObject settled(String text) throws Exception {
+        relay.storeSync.scanNow(0, false);
+        Thread.sleep(StoreSync.SETTLE_MS + 60);
+        relay.storeSync.scanNow(0, false);
+        relay.drain();
+        JSONObject it = find(items("/api/relay/ingest"), text);
+        assertNotNull(text, it);
+        return it;
+    }
+
+    @Test
+    public void aTextIsNotTakenForQuietWhenThatMightNotBeMessagesDoing() throws Exception {
+        long now = System.currentTimeMillis();
+        StoreSync.SETTLE_MS = 250;
+        // Not while the phone is in use: the conversation may be open on screen, which posts no notification either.
+        idleAtHome(now);
+        relay.storeSync.interactiveForTests = true;
+        phone.thread(31, "+18015550301");
+        phone.sms(31, "+18015550301", now - 100, 1, false, "In use");
+        assertFalse(settled("In use").has("quiet"));
+        relay.storeSync.interactiveForTests = false;
+
+        // Not a text already read on this phone.
+        phone.thread(32, "+18015550302");
+        phone.sms(32, "+18015550302", now - 100, 1, true, "Seen here");
+        assertFalse(settled("Seen here").has("quiet"));
+
+        // Not a text from before the listener connected: its notification may have come and gone unseen.
+        relay.listenerSince = now + 5_000;
+        phone.thread(33, "+18015550303");
+        phone.sms(33, "+18015550303", now - 100, 1, false, "Before the listener");
+        assertFalse(settled("Before the listener").has("quiet"));
+        relay.listenerSince = now - 10 * MIN;
+
+        // Not without a listener, or with Messages' notifications unseen for a day (they may be off).
+        relay.listening = false;
+        phone.thread(34, "+18015550304");
+        phone.sms(34, "+18015550304", now - 100, 1, false, "No listener");
+        assertFalse(settled("No listener").has("quiet"));
+        relay.listening = true;
+        relay.lastNotified = now - 2 * StoreSync.NOTIFIED_WITHIN_MS;
+        phone.thread(35, "+18015550305");
+        phone.sms(35, "+18015550305", now - 100, 1, false, "Notifications off");
+        assertFalse(settled("Notifications off").has("quiet"));
+        relay.lastNotified = now;
+
+        // Not one found late (the settle window long past): no telling what Messages did with it.
+        phone.thread(36, "+18015550306");
+        phone.sms(36, "+18015550306", now - 5 * MIN, 1, false, "Found late");
+        assertEquals(1, relay.storeSync.scanNow(0, false));
+        relay.drain();
+        assertFalse(find(items("/api/relay/ingest"), "Found late").has("quiet"));
+
+        // Not a text whose notification Android hid from the listener (a one-time code).
+        long t = System.currentTimeMillis();
+        phone.thread(37, "+18015550307");
+        phone.sms(37, "+18015550307", t - 100, 1, false, "Your code is 482913");
+        relay.onNotification(hiddenVersionOf(conversation("otp", "Example Bank", false, person("Example Bank", null), "Your code is 482913", t - 100)));
+        assertTrue(relay.hiddenNear(t - 100));
+        assertEquals(1, relay.storeSync.scanNow(0, false));   // nothing to wait for: it had its notification, hidden
+        relay.drain();
+        assertFalse(find(items("/api/relay/ingest"), "Your code is 482913").has("quiet"));
+
+        // And the same text, idle at home with nothing in the way, is quiet: the checks above are what stood in the way.
+        Thread.sleep(StoreSync.SETTLE_MS + 50);   // the hidden notification above is no longer "near"
+        phone.thread(38, "+18015550308");
+        phone.sms(38, "+18015550308", System.currentTimeMillis() - 100, 1, false, "Claim your prize");
+        assertEquals(v2(), settled("Claim your prize").optBoolean("quiet", false));
+
+        // A reply typed here is never quiet, whatever else holds.
+        phone.sms(31, "+18015550301", System.currentTimeMillis(), 2, true, "Reply from here");
+        JSONObject reply = settled("Reply from here");
+        assertEquals("out", reply.getString("dir"));
+        assertFalse(reply.has("quiet"));
+    }
+
     // ------------------------------------------------------------------ which conversation
 
     @Test

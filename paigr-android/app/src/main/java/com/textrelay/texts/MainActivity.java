@@ -103,6 +103,9 @@ public class MainActivity extends Activity implements Inbox.Listener {
         if (inbox.link == null) showConnect();
         else showList();
         String conv = getIntent() != null ? getIntent().getStringExtra(EXTRA_CONV) : null;
+        // Drawn again (light or dark switched): back in the conversation that was open, draft and all.
+        if (conv == null && inbox.link != null && inbox.current != null && !"inbox".equals(inbox.view)) conv = inbox.current;
+        else if (conv == null && inbox.link != null) inbox.closeThread();   // nothing open: texts for every conversation announce
         if (conv != null && inbox.link != null) openConversation(conv);
     }
 
@@ -153,6 +156,7 @@ public class MainActivity extends Activity implements Inbox.Listener {
 
     @Override
     protected void onPause() {
+        if (thread != null) thread.saveDraft();
         if (inbox != null) {
             SyncService.setScreenOpen(this, false);
             inbox.pause();

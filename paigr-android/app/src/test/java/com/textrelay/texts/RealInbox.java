@@ -119,6 +119,31 @@ final class RealInbox implements AutoCloseable {
         }
     }
 
+    /** One call with raw bytes (a sealed file) and extra headers, as `token`; the reply as JSON, its status in "_status". */
+    JSONObject call(String method, String path, String token, byte[] body, String[][] headers) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(origin + path).openConnection();
+        try {
+            c.setRequestMethod(method);
+            c.setRequestProperty("accept", "application/json");
+            if (token != null && !token.isEmpty()) c.setRequestProperty("x-relay-token", token);
+            for (String[] h : headers) c.setRequestProperty(h[0], h[1]);
+            c.setDoOutput(true);
+            try (java.io.OutputStream out = c.getOutputStream()) {
+                out.write(body);
+            }
+            int status = c.getResponseCode();
+            java.io.InputStream in = status >= 400 ? c.getErrorStream() : c.getInputStream();
+            String text = "";
+            if (in != null) try (java.util.Scanner s = new java.util.Scanner(in, "UTF-8").useDelimiter("\\A")) {
+                text = s.hasNext() ? s.next() : "";
+            }
+            JSONObject o = text.trim().startsWith("{") ? new JSONObject(text) : new JSONObject();
+            return o.put("_status", status);
+        } finally {
+            c.disconnect();
+        }
+    }
+
     /** What the server holds (its test-only /_debug/dump). */
     JSONObject dump() throws Exception {
         return call("GET", "/_debug/dump", "", null);

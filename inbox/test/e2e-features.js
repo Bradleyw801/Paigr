@@ -36,6 +36,17 @@ function png() {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
 }
 
+/** A PNG full of noise, so it's big enough to be worth shrinking. */
+function noisyPng(w, h) {
+  const zlib = require("zlib");
+  const raw = require("crypto").randomBytes((w * 3 + 1) * h);
+  for (let y = 0; y < h; y++) raw[y * (w * 3 + 1)] = 0;   // each row's filter byte
+  const crc = (buf) => { let c = ~0; for (const b of buf) { c ^= b; for (let k = 0; k < 8; k++) c = c & 1 ? (c >>> 1) ^ 0xEDB88320 : c >>> 1; } return (~c) >>> 0; };
+  const chunk = (type, data) => { const len = Buffer.alloc(4); len.writeUInt32BE(data.length); const td = Buffer.concat([Buffer.from(type), data]); const c = Buffer.alloc(4); c.writeUInt32BE(crc(td)); return Buffer.concat([len, td, c]); };
+  const ihdr = Buffer.alloc(13); ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]), chunk("IHDR", ihdr), chunk("IDAT", zlib.deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
 const results = [];
 async function check(name, fn) {
   try { await fn(); results.push([name, "ok"]); console.log("ok      " + name); }
@@ -287,6 +298,133 @@ async function check(name, fn) {
       await page.waitForFunction(() => document.querySelectorAll('#msg-list li .chip').length >= 3 && [...document.querySelectorAll("#msg-list li")].every(li => !li.textContent.includes("Reacted")), null, { timeout: 15000 });
       const chips = await page.$$eval('#msg-list li:has-text("See you at the north gate") .chip', els => els.map(e => e.textContent));
       assert.ok(chips.some(c => c.includes("❤️")) && chips.some(c => c.includes("👍")) && chips.some(c => c.includes("😂")), chips.join(","));
+    });
+    await check("l. the relay phone's limits: a big video is refused at once in words, a big picture is shrunk before sealing, a video too big for the inbox shows as its poster", async () => {
+      await call("/v2/relay/heartbeat", { headers: R, body: { listening: true, smsFallback: true, mmsMax: 1000000 - 3072, imageReply: false, sn: await TR2.sealJson(keys.enc, { note: "", history: "" }, TR2.AAD.note) } });
+      await page.click("#back-btn");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+      await page.click('#conv-list li:has-text("Maya Chen")');
+      await page.waitForSelector("#view-thread:not([hidden])");
+      // a video bigger than an MMS from the relay phone: refused before any upload, with the limit and the size (the
+      // page learns the limit from its next sync, so the pick is tried again until it has)
+      let refused = false;
+      for (let i = 0; i < 20 && !refused; i++) {
+        await page.setInputFiles("#attach-input", { name: "holiday.mp4", mimeType: "video/mp4", buffer: Buffer.alloc(3 * 1024 * 1024, 1) });
+        refused = await page.waitForSelector('#toast:has-text("Videos go out as MMS from the relay phone, which takes up to 974 KB there. This one is 3.0 MB.")', { timeout: 1500 }).then(() => true, () => false);
+        if (!refused) { await page.click("#attach-close").catch(() => {}); await sleep(1000); }
+      }
+      assert.ok(refused, "refused in words once the limit was known");
+      assert.ok(await page.isHidden("#attach-bar"));
+      // a big picture goes, shrunk to a modest JPEG (the relay phone shrinks it again for MMS)
+      const big = noisyPng(1000, 800);
+      assert.ok(big.length > 600 * 1024, "big enough to be worth shrinking: " + big.length);
+      await page.setInputFiles("#attach-input", { name: "beach.png", mimeType: "image/png", buffer: big });
+      await page.waitForSelector("#attach-bar:not([hidden])");
+      await page.click("#send-btn");
+      const it = await outbox(seen);
+      const o = await TR2.openJson(keys.enc, it.o, TR2.AAD.out(conv));
+      assert.strictEqual(o.media.mime, "image/jpeg");
+      assert.ok(o.media.bytes < big.length / 2, o.media.bytes + " of " + big.length);
+      const held = Object.values((await call("/_debug/dump"))["v2-messages"]).find(v => v.media && v.media.path === o.media.path);
+      const e = await TR2.openJson(keys.enc, held.e, TR2.AAD.message(conv, "out"));
+      assert.strictEqual(e.media.w, 1000);   // under SEND_SIDE already: only the bytes shrank
+      assert.strictEqual(e.media.mime, "image/jpeg");
+      await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "sent", via: "mms" } });
+      // a video too big for the inbox arrived on the relay phone: its poster and size came up, the video stayed there
+      const ts = Date.now();
+      const fp = await TR2.fpId(keys, "bigvideo000000000");
+      const poster = png();
+      const sealedPoster = await TR2.sealBytes(keys.enc, new Uint8Array(poster), TR2.AAD.file(conv, ts, fp, "preview"));
+      const put = await call("/v2/media/put", { method: "POST", body: Buffer.from(sealedPoster), headers: Object.assign({ "x-relay-conv": conv, "x-relay-fp": fp, "x-relay-ts": String(ts), "x-relay-kind": "preview", "content-type": "application/octet-stream" }, R) });
+      assert.strictEqual(put._status, 200, JSON.stringify(put));
+      await call("/v2/relay/ingest", { headers: R, body: { items: [{ conv, fp, ts, dir: "in", src: "notif",
+        e: await TR2.sealJson(keys.enc, { text: "", sender: "Maya Chen", name: "Maya Chen", group: false, ts, fp, media: { mime: "video/mp4", w: 8, h: 6, bytes: 60 * 1024 * 1024 } }, TR2.AAD.message(conv, "in")),
+        mt: await TR2.matchToken(keys, "in", "", "video/mp4"), media: { preview: put.path } }] } });
+      await page.waitForSelector('#msg-list li:has-text("Video · 60.0 MB · on the relay phone, in Messages")', { timeout: 15000 });
+      assert.ok(await page.isVisible('#msg-list li .video-pic img.pic'));
+      await page.click('#msg-list li .video-pic');
+      await page.waitForSelector('#lightbox:not([hidden])');
+      const cap = await page.textContent("#lightbox-cap");
+      assert.ok(cap.includes("Too big for the inbox, so it stayed on the relay phone"), cap);
+      await page.keyboard.press("Escape");
+    });
+    await check("m. a text written offline waits in words, goes by itself once the inbox answers, as one message", async () => {
+      const ctx = page.context();
+      await ctx.setOffline(true);
+      await page.fill("#msg-input", "Written in the tunnel");
+      await page.click("#send-btn");
+      await page.waitForSelector('#msg-list li:has-text("Written in the tunnel") :text("Waiting for a connection. Tap to send now.")', { timeout: 20000 });
+      const before = Object.values((await call("/_debug/dump"))["v2-messages"]).filter(v => v.conv === conv && v.dir === "out").length;
+      await ctx.setOffline(false);
+      await page.waitForSelector('#msg-list li:has-text("Written in the tunnel") :text("Sending…")', { timeout: 30000 });
+      const it = await outbox(seen);
+      const o = await TR2.openJson(keys.enc, it.o, TR2.AAD.out(conv));
+      assert.strictEqual(o.text, "Written in the tunnel");
+      const held = Object.values((await call("/_debug/dump"))["v2-messages"]).filter(v => v.conv === conv && v.dir === "out");
+      assert.strictEqual(held.length, before + 1, "one message, not one per try");
+      assert.ok(held.some(v => v.k === it.id && typeof v.cid === "string" && v.cid.startsWith("tmp:")), "known by this device's id for it");
+      await call("/v2/relay/outbox/result", { headers: R, body: { id: it.id, status: "sent", via: "rcs" } });
+      await page.waitForSelector('#msg-list li:has-text("Written in the tunnel") :text("Sent")', { timeout: 15000 });
+      assert.strictEqual(await page.locator('#msg-list li:has-text("Written in the tunnel")').count(), 1, "one row");
+    });
+    await check("n. what Messages keeps quiet on the relay phone sits under Filtered, out of the counts, and the owner moves it either way", async () => {
+      // A text the relay phone found in its message store with no notification for it: Messages' spam folder.
+      const prize = await TR2.convId(keys, "c-prize");
+      const quiet = async (text, extra) => {
+        const ts = Date.now(), f = await TR2.fpId(keys, (++n).toString(16).padStart(16, "0"));
+        return call("/v2/relay/ingest", { headers: R, body: { items: [Object.assign({ conv: prize, fp: f, ts, dir: "in", src: "store",
+          e: await TR2.sealJson(keys.enc, { text, sender: "(801) 555-0190", name: "(801) 555-0190", group: false, ts, fp: f }, TR2.AAD.message(prize, "in")),
+          ne: await TR2.sealJson(keys.enc, { name: "(801) 555-0190", group: false }, TR2.AAD.name(prize)),
+          mt: await TR2.matchToken(keys, "in", text, "") }, extra || { quiet: true })] } });
+      };
+      assert.strictEqual((await quiet("You have won a $500 gift card. Claim it today"))._status, 200);
+      await page.click("#back-btn");
+      await page.waitForSelector("#view-inbox:not([hidden])");
+      await page.waitForSelector("#filtered-head", { timeout: 15000 });
+      let list = await page.textContent("#conv-list");
+      assert.ok(!list.includes("(801) 555-0190"), "not among the conversations: " + list);
+      assert.ok(await page.isVisible("#filtered-head"), "the Filtered row");
+      assert.strictEqual(await page.textContent("#filtered-head .filtered-count"), "1");
+      const counted = await page.evaluate(() => [...document.querySelectorAll("#conv-list .conv:not(.filtered) .badge")].reduce((n, b) => n + Number(b.textContent), 0));
+      await page.click("#filtered-head");
+      await page.waitForSelector('#conv-list li.conv.filtered:has-text("(801) 555-0190")');
+      await page.click('#conv-list li.conv.filtered:has-text("(801) 555-0190")');
+      await page.waitForSelector('#view-thread:not([hidden]) #msg-list:has-text("You have won a $500 gift card")');
+      const notice = await page.textContent("#thread-notice");
+      assert.ok(notice.includes("In Filtered: Messages on the relay phone keeps this conversation quiet"), notice);
+      // its unread never counted on the way back
+      assert.ok(await page.isHidden("#back-count") || Number(await page.textContent("#back-count")) === counted, "Filtered unread stay out of the count");
+      // the owner's word: back to the inbox, and it stays there whatever the relay phone says next
+      await page.click("#thread-notice .notice-btn");
+      await page.waitForSelector("#thread-notice", { state: "hidden" });
+      const dump = (await call("/_debug/dump"))["v2-convs"][tid + "/" + prize];
+      assert.strictEqual(dump.filtered, false);
+      assert.strictEqual(dump.filteredBy, "user");
+      await page.click("#back-btn");
+      await page.waitForSelector('#conv-list li.conv:not(.filtered):has-text("(801) 555-0190")');
+      assert.ok(await page.isHidden("#filtered-head") || !(await page.isVisible("#filtered-head")), "no Filtered row with nothing in it");
+      // and under Filtered again, from the details
+      await page.click('#conv-list li.conv:has-text("(801) 555-0190")');
+      await page.waitForSelector("#view-thread:not([hidden])");
+      await page.click("#thread-title");
+      await page.waitForSelector("#view-details:not([hidden])");
+      assert.strictEqual(await page.textContent("#details-filter"), "Move to Filtered");
+      await page.click("#details-filter");
+      await page.waitForFunction(() => document.getElementById("details-filter").textContent === "Move to the inbox", null, { timeout: 15000 });
+      await page.click("#details-back");
+      await page.waitForSelector("#view-thread:not([hidden])");
+      assert.ok((await page.textContent("#thread-notice")).includes("In Filtered."), "the owner's own doing: no word about Messages");
+      await page.click("#back-btn");
+      await page.waitForSelector("#filtered-head");
+      list = await page.evaluate(() => [...document.querySelectorAll("#conv-list .conv:not(.filtered)")].map(li => li.textContent).join("|"));
+      assert.ok(!list.includes("(801) 555-0190"), list);
+      // the relay phone's next quiet text in a conversation the owner moved to the inbox doesn't move it back (server test); here:
+      // a notified text in one the owner moved under Filtered keeps it there
+      await quiet("Last chance", {});   // src store, not quiet: as a notified copy would come
+      await page.waitForFunction(() => /Last chance/.test(document.getElementById("conv-list").textContent), null, { timeout: 15000 });
+      assert.strictEqual(await page.textContent("#filtered-head .filtered-count"), "1");
+      const rows = await page.evaluate(() => [...document.querySelectorAll("#conv-list .conv:not(.filtered)")].map(li => li.textContent).join("|"));
+      assert.ok(!rows.includes("(801) 555-0190"), "still under Filtered: " + rows);
     });
     if (process.env.SHOT) {   // a look at it: SHOT=/path/to.png node test/e2e-features.js
       await page.setViewportSize({ width: 400, height: 760 });

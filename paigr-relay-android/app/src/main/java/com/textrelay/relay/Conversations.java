@@ -390,6 +390,23 @@ final class Conversations {
         return context.checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED;
     }
 
+    /** Contacts changed (one saved, one renamed): the names looked up so far are looked up again. */
+    void watchContacts() {
+        try {
+            context.getContentResolver().registerContentObserver(ContactsContract.Contacts.CONTENT_URI, true,
+                    new android.database.ContentObserver(new android.os.Handler(android.os.Looper.getMainLooper())) {
+                        @Override
+                        public void onChange(boolean selfChange) {
+                            synchronized (Conversations.this) {
+                                names.clear();
+                            }
+                        }
+                    });
+        } catch (RuntimeException ignored) {
+            // no contacts provider to watch
+        }
+    }
+
     /** The contact's name for an address, or null when there is none or Contacts isn't allowed. */
     synchronized String contactName(String address) {
         if (address == null || address.isEmpty() || !contactsAllowed()) return null;

@@ -41,8 +41,9 @@ Paigr, or the web page in a browser, is an inbox device (the "inbox" role). The 
 | `ne` | `seal(Kenc, JSON{name, group}, "tr2:n:" + conv)`, only when the message names its conversation |
 | files | `seal(Kenc, bytes, "tr2:f:" + conv + ":" + ts13 + ":" + fp + ":" + (o or p))`, stored as `application/zip` at `/media/v2/<tid>/<conv>/<ts13>-<fp>-<o\|p>.enc` |
 
-Times, directions, read state, delivery status and which messages are copies of each other stay visible: the server
-needs them to deduplicate, sync and count unread. What devices show is the sealed version of each: the server's copy
+Times, directions, read state, delivery status, which messages are copies of each other, and whether Messages kept
+a text quiet (Filtered conversations, below) stay visible: the server needs them to deduplicate, sync, count unread
+and file. What devices show is the sealed version of each: the server's copy
 only sorts and counts.
 
 ## What each seal is bound to
@@ -122,6 +123,14 @@ limits when it's a picture (`too_big` when it can't be). A request naming a file
 refused (`unchecked`). The server's `media` on the stored message is only ever `{path, preview}` of this inbox and
 conversation (`mediaOf`), and `lastMedia` says the conversation's last message had one.
 
+**Sizes.** A stored file is at most 25 MB (the hosted inbox's limit for one object; the self-hosted server keeps the
+same). The relay phone sends a video or file from a device as MMS, so a device refuses one bigger than the relay
+phone's `mmsMax` before uploading anything, and says why. A picture always goes: a device shrinks it to a modest JPEG
+before sealing unless `imageReply` says Messages will take the original, and the relay phone shrinks it again to the
+carrier's MMS limits when it goes that way. Every video, from either side, carries a poster frame as its `preview`,
+so threads show a picture of it. An attachment that reaches the relay phone bigger than 25 MB stays there: its
+`media` goes up with `bytes` and (for a video) a `preview` but no `path`, and devices show it as on the relay phone.
+
 **Reactions and quoted replies** are not protocol: Messages has no door for another app to send either, so they travel
 as text in the forms phones already understand, and every device reads them back out of the text to draw them
 (web/tr2.js `words`, Words.java in both apps, test/vectors.json for what all three must agree on). A reaction is the
@@ -188,7 +197,9 @@ reuses the conversation it keyed first; the relay phone folds two started conver
 ## The relay phone's status
 
 `POST /v2/relay/heartbeat` carries numbers and switches in the open (battery, listening, queue length, version, and
-`smsFallback`: whether the phone may send SMS itself, so devices know a reply needn't wait for an open notification) and
+`smsFallback`: whether the phone may send SMS itself, so devices know a reply needn't wait for an open notification;
+`mmsMax`: the most bytes an MMS from it can carry, 0 while it can't send any; `imageReply`: whether Messages' reply
+action takes pictures, so a picture from a device goes through Messages rather than as MMS) and
 the phone's own words sealed: `sn = seal(Kenc, JSON{note, history, model}, "tr2:note")` (its last problem, why the
 history copy paused, and its model). The phone's words are its own: a refusal from the server is described by its
 status code alone (what the server wrote with it is dropped), and a crash or a failed merge by its kind, so nothing the
@@ -198,6 +209,26 @@ server wrote is sealed into the note, or shown on the relay phone's own screens.
 `matchText` is v1's rule, run on the phone: NFKC, drop U+200B–U+200D and U+FEFF, collapse JavaScript `\s` runs to one
 space, trim; a bare media word ("Photo", "sent a picture", "📷 Video"…) or an empty text with an attachment becomes
 `"\u0000"` + Picture / Video / Voice message / Attachment.
+
+## Filtered conversations
+
+Messages on the relay phone keeps a spam folder, and says nothing about it: a text it files as spam posts no
+notification, but still lands in the phone's SMS store, where the relay phone's message-history check finds it. So the
+relay phone marks such a text `quiet: true` in `/v2/relay/ingest`: an incoming store text it found with no notification
+for it, while its notification listener was up the whole time (and had seen a Messages notification within the day),
+the text still unread on the phone, no notification hidden from the listener around then, and the text not an
+attachment without words (nothing to match a notification by). It waits two minutes for a late notification first.
+A quiet text puts its conversation under Filtered: the conversation summary carries `filtered: true, filteredBy:
+"relay"`. Devices list Filtered conversations in their own section, count none of their unread, and show no
+notification for them; the server sends no web push for them. A later text in it that Messages did notify about takes
+it back out (Messages no longer treats it as spam). `quiet` means nothing on a reply, a history row or a notified copy;
+a notification that arrives after the quiet copy folds into it and clears the mark.
+
+A device's owner has the last word: `POST /v2/filter {conv, filtered: true|false}` sets `filteredBy: "user"`, and the
+relay phone's reading no longer moves that conversation either way. The change goes through the arrival log as a
+`seen` entry (the summary alone), so every device files it the same way at its next sync. Nothing goes back to the
+relay phone: marking a conversation Filtered on a device doesn't mark it spam in Messages, and Messages' spam folder
+only ever shows here through the texts that reach the store.
 
 ## Devices
 
@@ -312,7 +343,7 @@ Relay phone: `POST /v2/relay/ingest`, `GET /v2/relay/outbox`, `POST /v2/relay/ou
 `POST /v2/relay/merge`.
 
 Inbox devices: `GET /v2/inbox`, `GET /v2/thread`, `GET /v2/sync`, `POST /v2/send {conv, e, o, mt, media?, ne?}`, `POST /v2/read`,
-`GET /v2/status`, `POST /v2/push/register`, `POST /v2/push/test`, `POST /v2/relay/wake`,
+`POST /v2/filter {conv, filtered}`, `GET /v2/status`, `POST /v2/push/register`, `POST /v2/push/test`, `POST /v2/relay/wake`,
 `POST /v2/import` and `/v2/import/done` (moving a v1 inbox in).
 
 A conversation read anywhere (`POST /v2/read` from a device, or `reads` from the relay phone) puts a `seen` entry in the

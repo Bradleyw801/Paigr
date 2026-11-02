@@ -40,7 +40,7 @@ async function call(p, o) {
     const adopted = await call("/v2/link/adopt", { body: { lookup: s.lookup, answer: await TR2.sealJson(s.boxKey, { v: 2, tid, key: TR2.b64u(K) }, TR2.AAD.box), create: { tid, token: texts } } });
     assert.strictEqual(adopted._status, 200, JSON.stringify(adopted));
     const keys = await TR2.inboxKeys(K);
-    await call("/v2/relay/heartbeat", { headers: { "x-relay-token": relay }, body: { listening: true, sn: await TR2.sealJson(keys.enc, { note: "", history: "", model: "Pixel 8" }, TR2.AAD.note) } });
+    await call("/v2/relay/heartbeat", { headers: { "x-relay-token": relay }, body: { listening: true, sn: await TR2.sealJson(keys.enc, { note: "", history: "", model: "Example Phone 2" }, TR2.AAD.note) } });
 
     const invite = async () => {
       const code = TR2.newCode(), c = await TR2.linkSecrets(code);

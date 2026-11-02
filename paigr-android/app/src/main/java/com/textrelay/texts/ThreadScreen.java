@@ -69,6 +69,9 @@ final class ThreadScreen extends Screen {
     private final EditText find;
     private final TextView findCount;
     private final TextView notice;
+    /** Under the notice for a Filtered conversation: the way back to the inbox, right here. */
+    private final LinearLayout noticeBox;
+    private final TextView noticeAction;
     final ListView list;
     private final TextView earlier;
     private final LinearLayout composer;
@@ -97,6 +100,8 @@ final class ThreadScreen extends Screen {
     private boolean scrolling;
     private String query = "";
     private final List<int[]> marks = new ArrayList<>();   // [message index in the thread, start]
+    /** Each mark's message by key, so a thread that changes under the search doesn't move the marks. */
+    private final List<String> markKeys = new ArrayList<>();
     private int mark = -1;
     private int width;
     /** The message a reply is to, while one is being written. */
@@ -196,8 +201,19 @@ final class ThreadScreen extends Screen {
         notice = ui.label("You can reply after their next text reaches the relay phone.", 13f, Ui.BOLD, ui.text);
         notice.setGravity(Gravity.CENTER);
         notice.setPadding(ui.dp(14), ui.dp(8), ui.dp(14), ui.dp(8));
-        notice.setVisibility(View.GONE);
-        col.addView(notice);
+        noticeBox = new LinearLayout(a);
+        noticeBox.setOrientation(LinearLayout.VERTICAL);
+        noticeBox.setGravity(Gravity.CENTER_HORIZONTAL);
+        noticeBox.addView(notice, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        noticeAction = ui.textButton("Move to the inbox", ui.link, v -> inbox.setFiltered(conv, false, ok -> {
+            if (!ok) a.say("Couldn't move it to the inbox. Check the connection.", 3000);
+        }));
+        noticeAction.setPadding(ui.dp(14), ui.dp(4), ui.dp(14), ui.dp(8));
+        noticeAction.setContentDescription("Move to the inbox");
+        noticeAction.setVisibility(View.GONE);
+        noticeBox.addView(noticeAction);
+        noticeBox.setVisibility(View.GONE);
+        col.addView(noticeBox);
 
         list = new ListView(a);
         list.setDivider(null);
@@ -221,7 +237,7 @@ final class ThreadScreen extends Screen {
         list.setOnItemClickListener((p, v, pos, id) -> {
             Item it = adapter.getItem(pos - list.getHeaderViewsCount());
             if (it == null || it.m == null) return;
-            if (it.type == OUT && "failed".equals(it.m.status) && !it.m.unchecked && (!it.m.text.isEmpty() || (it.m.media != null && it.m.media.localUri != null))) {
+            if (it.type == OUT && "failed".equals(it.m.status) && !it.m.unchecked && !inbox.wasRetried(it.m) && (!it.m.text.isEmpty() || (it.m.media != null && it.m.media.localUri != null))) {
                 inbox.sendAgain(it.m);
                 return;
             }
@@ -413,12 +429,20 @@ final class ThreadScreen extends Screen {
         list.setBackground(bg);
         send.setBackground(ui.pressable(ui.gradient(hue.base, hue.partner, GradientDrawable.Orientation.TL_BR, 22), 22));
         replyRule.setBackground(ui.rounded(hue.base, 2));
-        String draft = drafts.get(c);
+        loadingEarlier = false;
+        earlierFailed = false;
+        String draft = drafts.containsKey(c) ? drafts.get(c) : a.prefs.draft(c);
         input.setText(draft != null ? draft : "");
         input.setSelection(input.getText().length());
         inbox.openThread(c);
         render(true);
         list.setSelection(adapter.getCount() + list.getHeaderViewsCount() - 1);
+    }
+
+    /** What's typed and not sent, kept on this phone: a restart or a switch to dark brings it back. */
+    void saveDraft() {
+        if (conv == null) return;
+        a.prefs.setDraft(conv, input.getText().toString());
     }
 
     @Override
@@ -436,6 +460,7 @@ final class ThreadScreen extends Screen {
     void hidden() {
         hideKeyboard();
         showEmojis(false);
+        saveDraft();
     }
 
     @Override
@@ -516,8 +541,8 @@ final class ThreadScreen extends Screen {
     static String notSent(String code) {
         switch (code == null ? "" : code) {
             case "stopped": return "Relay stopped mid-send. Check the relay phone first.";
-            case "old": return "Too old to send.";
-            case "future": return "Its time was off.";
+            case "old": return "Too old to send by the time it reached the relay phone.";
+            case "future": return "This phone's clock is ahead of the relay phone's. Check the time.";
             case "again": return "Already handled once.";
             case "unknown_conv": return "The relay phone doesn't know this conversation.";
             case "unchecked": return "The relay phone couldn't check it.";
@@ -525,9 +550,12 @@ final class ThreadScreen extends Screen {
             case "group": return "Group replies work after their next text.";
             case "no_number": return "No number for SMS fallback.";
             case "sms_failed": return "SMS fallback failed.";
-            case "before_move": return "From before the move.";
-            case "local": return "Couldn't reach the inbox.";
+            case "before_move": return "Written before the relay phone moved to this inbox.";
+            case "local": return "Couldn't read that file on this phone.";
+            case "offline": return "Couldn't reach the inbox.";
+            case "refused": return "The inbox refused it.";
             case "too_big_here": return "That file is too big to send (25 MB at most).";
+            case "too_big_mms": return "Too big for an MMS from the relay phone.";
             case "no_attach": return "Attachments can't be sent to this conversation from here.";
             case "attach_perm": return "Allow SMS fallback in Paigr Relay to send attachments.";
             case "too_big": return "Too big to send as MMS from the relay phone.";
@@ -649,8 +677,10 @@ final class ThreadScreen extends Screen {
                 if ("queued".equals(m.status)) it.status = "Sending…";
                 else if ("failed".equals(m.status)) {
                     it.failed = true;
-                    boolean again = !m.unchecked && (!m.text.isEmpty() || (m.media != null && m.media.localUri != null));
-                    it.status = "Not sent. " + notSent(m.code) + (again ? " Tap to retry." : "");
+                    boolean again = !m.unchecked && !inbox.wasRetried(m) && (!m.text.isEmpty() || (m.media != null && m.media.localUri != null));
+                    if (Inbox.waitsForConnection(m)) it.status = "Waiting for a connection. Tap to send now.";
+                    else if (inbox.wasRetried(m)) it.status = "Not sent. Sent again below.";
+                    else it.status = "Not sent. " + notSent(m.code) + (again ? " Tap to retry." : "");
                 } else if ("sms".equals(m.via)) it.status = "Sent as SMS";
                 else if ("mms".equals(m.via)) it.status = "Sent as MMS";
                 else if ("phone".equals(m.via)) it.status = "Sent from the relay phone";
@@ -706,16 +736,29 @@ final class ThreadScreen extends Screen {
         // No open reply on the relay phone: replies wait for their next text, unless SMS fallback takes them (one-to-one).
         boolean canReply = cv == null || cv.canReply || (!cv.group && inbox.smsFallbackOn());
         String startedWith = inbox.startedWith(conv);
-        if (startedWith != null && inbox.thread(conv).isEmpty()) {
+        noticeAction.setVisibility(cv != null && cv.filtered ? View.VISIBLE : View.GONE);
+        if (cv != null && cv.filtered) {
+            // Under Filtered: a word on why, and the way back.
+            notice.setText("user".equals(cv.filteredBy) ? "In Filtered."
+                    : "In Filtered: Messages on the relay phone keeps this conversation quiet (spam, or notifications off for it).");
+            notice.setVisibility(View.VISIBLE);
+        } else if (startedWith != null && inbox.thread(conv).isEmpty()) {
             notice.setText("Your first text to " + Numbers.pretty(startedWith) + " goes out as SMS from your relay phone.");
+            notice.setVisibility(View.VISIBLE);
+        } else if (inbox.pageWaiting(conv)) {
+            notice.setText("Couldn't load this conversation. It comes when the inbox answers again.");
+            notice.setVisibility(View.VISIBLE);
+        } else if ("bad".equals(Inbox.health(inbox.relay, System.currentTimeMillis()).level)) {
+            notice.setText("The relay phone is offline. Texts go out when it's back.");
             notice.setVisibility(View.VISIBLE);
         } else {
             notice.setText("You can reply after their next text reaches the relay phone.");
             notice.setVisibility(canReply ? View.GONE : View.VISIBLE);
         }
-        notice.setBackgroundColor(ui.tint(hue));
-        earlier.setVisibility(inbox.hasEarlier(conv) ? View.VISIBLE : View.GONE);
-        earlier.setText(loadingEarlier ? "Loading…" : "Earlier messages");
+        noticeBox.setBackgroundColor(ui.tint(hue));
+        noticeBox.setVisibility(notice.getVisibility());
+        earlier.setVisibility(inbox.hasEarlier(conv) || earlierFailed ? View.VISIBLE : View.GONE);
+        earlier.setText(loadingEarlier ? "Loading…" : earlierFailed ? "Couldn't load. Tap to try again" : "Earlier messages");
         // what's at the top now, to keep it there
         int headers = list.getHeaderViewsCount();
         int firstPos = Math.max(list.getFirstVisiblePosition(), headers);
@@ -745,20 +788,21 @@ final class ThreadScreen extends Screen {
         return last == null || last.getBottom() <= list.getHeight() - list.getPaddingBottom() + ui.dp(4);
     }
 
+    /** The last try for earlier messages failed: the button says so, and tries again on a tap. */
+    private boolean earlierFailed;
+
     private void loadEarlier() {
         if (loadingEarlier || conv == null) return;
         loadingEarlier = true;
+        earlierFailed = false;
         earlier.setText("Loading…");
         String c = conv;
-        inbox.loadEarlier(added -> {
+        inbox.loadEarlier(added -> {   // always answers: how many came, or -1
             loadingEarlier = false;
             if (!c.equals(conv)) return;
+            earlierFailed = added < 0;
             render(false);
         });
-        // when the inbox didn't answer for this thread (another opened meanwhile), let it try again
-        list.postDelayed(() -> {
-            if (loadingEarlier && !c.equals(conv)) loadingEarlier = false;
-        }, 15_000);
     }
 
     /** Scrolls to a message (one that was quoted), and shows its time so it stands out. */
@@ -785,6 +829,7 @@ final class ThreadScreen extends Screen {
         Inbox.Attachment att = pending;
         input.setText("");
         drafts.remove(conv);
+        a.prefs.setDraft(conv, "");
         replyTo(null);
         attach(null);
         inbox.send(conv, text, att);
@@ -816,8 +861,9 @@ final class ThreadScreen extends Screen {
         }
         String[] d = Media.describeLocal(a.getContentResolver(), uri);
         long size = Long.parseLong(d[2]);
-        if (size > Inbox.ATTACH_MAX) {
-            a.say("That file is too big to send (25 MB at most).", 4000);
+        String cant = inbox.cantSend(d[0], size);
+        if (cant != null) {
+            a.say(cant, 5000);
             return;
         }
         try {
@@ -906,26 +952,40 @@ final class ThreadScreen extends Screen {
         if (!inbox.finding && findBar.getVisibility() != View.VISIBLE) return;
         inbox.finding = false;
         query = "";
+        String found = mark >= 0 && mark < markKeys.size() ? markKeys.get(mark) : null;
         marks.clear();
+        markKeys.clear();
         mark = -1;
         findBar.setVisibility(View.GONE);
         header.setVisibility(View.VISIBLE);
         InputMethodManager im = a.getSystemService(InputMethodManager.class);
         if (im != null) im.hideSoftInputFromWindow(find.getWindowToken(), 0);
-        render(true);
+        // The message that was found stays in view, timed, rather than the thread jumping to its end.
+        atEnd = found == null;
+        render(false);
+        if (found != null) jumpTo(found);
     }
 
     /** Every match of the search, and the newest one in view, like stepping up from the bottom. */
     private void collect(boolean reset) {
+        String was = mark >= 0 && mark < marks.size() ? markKeys.get(mark) : null;
         marks.clear();
+        markKeys.clear();
         List<Model.Msg> msgs = inbox.thread(conv);
         if (!query.isEmpty()) {
             for (int i = 0; i < msgs.size(); i++) {
                 Model.Msg m = msgs.get(i);
                 if (m.unchecked || adapter.indexOf(m.k) < 0) continue;
                 String t = shown(m).toLowerCase(Locale.ROOT);
-                for (int at = t.indexOf(query); at >= 0; at = t.indexOf(query, at + query.length())) marks.add(new int[] { i, at });
+                for (int at = t.indexOf(query); at >= 0; at = t.indexOf(query, at + query.length())) {
+                    marks.add(new int[] { i, at });
+                    markKeys.add(m.k);
+                }
             }
+        }
+        if (!reset && was != null) {
+            int again = markKeys.indexOf(was);
+            if (again >= 0) mark = again;   // the thread changed under the search: the same message stays found
         }
         if (query.isEmpty()) findCount.setText("");
         else if (marks.isEmpty()) findCount.setText("None");
@@ -944,8 +1004,7 @@ final class ThreadScreen extends Screen {
     private void focusMark() {
         if (mark < 0 || mark >= marks.size()) return;
         findCount.setText((mark + 1) + " of " + marks.size());
-        Model.Msg m = inbox.thread(conv).get(marks.get(mark)[0]);
-        int idx = adapter.indexOf(m.k);
+        int idx = adapter.indexOf(markKeys.get(mark));
         if (idx >= 0) list.setSelectionFromTop(idx + list.getHeaderViewsCount(), Math.max(0, list.getHeight() / 3));
     }
 
@@ -1059,7 +1118,7 @@ final class ThreadScreen extends Screen {
         if (!query.isEmpty()) {
             for (int i = 0; i < marks.size(); i++) {
                 int[] mk = marks.get(i);
-                if (mk[0] != msgIndex) continue;
+                if (mk[0] != msgIndex || mk[1] > text.length()) continue;
                 int color = i == mark ? 0xFFFFB300 : (ui.dark ? 0x99B38600 : 0xFFFFE28A);
                 s.setSpan(new BackgroundColorSpan(color), mk[1], Math.min(text.length(), mk[1] + query.length()), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
             }
@@ -1324,6 +1383,10 @@ final class ThreadScreen extends Screen {
                     tileText = media.blocked ? kind + " couldn't be checked, so it isn't shown." : kind + " is on the relay phone.";
                     tileIconRes = media.blocked ? R.drawable.ic_alert : R.drawable.ic_image;
                 }
+            } else if (pic && media.path == null && media.localUri == null) {
+                // A video too big for the inbox: its poster shows, and this says where the video is.
+                tileText = kind + (media.bytes > 0 ? ", " + Format.bytes(media.bytes) : "") + ": on the relay phone, in Messages.";
+                tileIconRes = R.drawable.ic_image;
             }
             tile.setVisibility(tileText != null ? VISIBLE : GONE);
             if (tileText != null) {

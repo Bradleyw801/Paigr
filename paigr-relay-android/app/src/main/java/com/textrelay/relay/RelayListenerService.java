@@ -39,15 +39,35 @@ public class RelayListenerService extends NotificationListenerService {
         current = this;
         Relay relay = Relay.get(this);
         relay.listening = true;
-        // Picks up texts that arrived while the relay was down, and restores reply handles.
-        WORK.execute(() -> relay.rescan(false));
+        relay.listenerSince = System.currentTimeMillis();
+        // Picks up texts that arrived while the relay was down, and restores reply handles. The system can refuse the
+        // read for a moment right after connecting: then again, a little later, a few times.
+        rescanSoon(relay, 0, 0);
         RelayService.start(this);
+    }
+
+    private void rescanSoon(Relay relay, long delayMs, int attempt) {
+        Runnable go = () -> WORK.execute(() -> {
+            boolean read;
+            try {
+                read = relay.rescan(false);
+            } catch (RuntimeException e) {
+                android.util.Log.w("Relay", "rescan failed", e);
+                read = true;   // not the system refusing: no point asking again
+            }
+            if (!read && bound() && attempt < 3) rescanSoon(relay, 2_000L * (attempt + 1), attempt + 1);
+            else relay.rescanned();
+        });
+        if (delayMs <= 0) go.run();
+        else new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(go, delayMs);
     }
 
     @Override
     public void onListenerDisconnected() {
         if (current == this) current = null;
-        Relay.get(this).listening = false;
+        Relay relay = Relay.get(this);
+        relay.listening = false;
+        relay.listenerLostAt = System.currentTimeMillis();
         requestRebind(new ComponentName(this, RelayListenerService.class));
     }
 
@@ -60,6 +80,32 @@ public class RelayListenerService extends NotificationListenerService {
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
         Relay relay = Relay.get(this);
-        WORK.execute(() -> relay.onNotification(sbn));
+        WORK.execute(() -> {
+            try {
+                relay.onNotification(sbn);
+            } catch (RuntimeException e) {
+                // A notification in a shape nobody expected: noted, never fatal (an uncaught one here ends the process).
+                android.util.Log.w("Relay", "notification not read", e);
+                relay.lastError = "Problem reading a notification: " + e.getClass().getSimpleName();
+            }
+        });
+    }
+
+    /**
+     * Messages took a conversation's notification down itself: it was opened on this phone (or marked read), so the
+     * conversation is read, and every device hears so. A swipe by the user says nothing about reading.
+     */
+    @Override
+    public void onNotificationRemoved(StatusBarNotification sbn, RankingMap rankingMap, int reason) {
+        if (sbn == null || !Parser.MESSAGES_PACKAGE.equals(sbn.getPackageName())) return;
+        if (reason != REASON_CLICK && reason != REASON_APP_CANCEL && reason != REASON_APP_CANCEL_ALL) return;
+        Relay relay = Relay.get(this);
+        WORK.execute(() -> {
+            try {
+                relay.onNotificationRead(sbn);
+            } catch (RuntimeException e) {
+                android.util.Log.w("Relay", "removed notification not read", e);
+            }
+        });
     }
 }

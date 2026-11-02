@@ -13,6 +13,13 @@ final class Text {
         return (s / 86400) + " d ago";
     }
 
+    /** A size in plain units: "300 KB", "1.2 MB". */
+    static String bytes(long n) {
+        if (n < 1024) return n + " B";
+        if (n < 1024 * 1024) return Math.round(n / 1024.0) + " KB";
+        return String.format(java.util.Locale.US, "%.1f MB", n / 1048576.0);
+    }
+
     /** Shortens to at most max chars without splitting an emoji in half. */
     static String clip(String s, int max) {
         if (s == null) return "";

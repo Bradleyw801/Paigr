@@ -99,12 +99,13 @@ function picture(w, h, a, b) {
         payload.media = { mime: "image/png", w: it.pic[0], h: it.pic[1], bytes: png.length };
       }
       const rec = {
-        conv, fp, ts, dir, src: "notif", read: !!it.read,
+        conv, fp, ts, dir, src: it.quiet ? "store" : "notif", read: !!it.read,
         e: await TR2.sealJson(keys.enc, payload, TR2.AAD.message(conv, dir)),
         ne: await TR2.sealJson(keys.enc, { name, group }, TR2.AAD.name(conv)),
         mt: await TR2.matchToken(keys, dir, it.text || "", it.pic ? "image/png" : "")
       };
       if (media) rec.media = media;
+      if (it.quiet) rec.quiet = true;   // found in the relay phone's message store with no notification: Messages' spam folder
       out.push(rec);
     }
     await call("/v2/relay/ingest", { headers: R, body: { items: out, replyable: { [conv]: true } } });
@@ -154,12 +155,15 @@ function picture(w, h, a, b) {
     await say("c-code", "72975", false, [{ at: now - 9 * day, text: "Your code is 482913. It expires in 10 minutes.", read: true }]);
     await say("c-coach", "Coach Rivera", false, [{ at: now - 11 * day, text: "Practice moved to the north field", read: true }]);
     await say("c-pharm", "Pharmacy", false, [{ at: now - 14 * day, text: "Your order is ready for pickup.", read: true }]);
+    // A text Messages on the relay phone filed as spam: under Filtered on every device.
+    await say("c-prize", "(801) 555-0190", false, [{ at: now - 3 * hour, text: "You have won a $500 gift card. Claim it today", quiet: true }]);
   }
   let extra = {};
   if (SCENARIO === "dishonest") extra = await dishonest(keys, tid, R);
   await call("/v2/relay/heartbeat", { headers: R, body: {
     listening: true, battery: 84, charging: true, replyable: 6, lastRelayed: now - 6 * min, queued: 0,
-    sn: await TR2.sealJson(keys.enc, { note: "", model: "Pixel 7a" }, TR2.AAD.note),
+    smsFallback: true, mmsMax: 1_000_000 - 3072, imageReply: false,   // a file goes as MMS of under a megabyte; a picture is shrunk
+    sn: await TR2.sealJson(keys.enc, { note: "", model: "Example Phone 2" }, TR2.AAD.note),
     store: { allowed: true, lastScan: now - 2 * min, history: { state: "done", done: 12480, total: 12480, at: now - 3 * day, media: true } }
   } });
   process.stdout.write(JSON.stringify(Object.assign({ server: ORIGIN, tid, token, key: TR2.b64u(key), relayToken }, extra)) + "\n");
@@ -203,7 +207,19 @@ async function dishonest(keys, tid, R) {
   const keyOf = async (ts, n) => "m:" + pad13(ts) + ":" + await TR2.fpId(keys, fp(n));
   const kOwe = await keyOf(t0, 1), kHi = await keyOf(t0 + 20000, 5), kPic = await keyOf(picTs, 3), kPic2 = await keyOf(pic2Ts, 7), kMeg = await keyOf(t0 + 60000, 4);
   const owe = msgs[tid + "/" + kOwe], hi = msgs[tid + "/" + kHi], pic = msgs[tid + "/" + kPic], pic2 = msgs[tid + "/" + kPic2], meg = msgs[tid + "/" + kMeg];
-  const putMsg = (k, v) => call("/_debug/put", { body: { collection: "v2-messages", key: tid + "/" + k, value: Object.assign({}, v, { k, cv: tid + "/" + v.conv }) } });
+  // A dishonest server rewrites a message everywhere it holds it: the row, and its copies in the feed devices sync from.
+  const putMsg = async (k, v) => {
+    const value = Object.assign({}, v, { k, cv: tid + "/" + v.conv });
+    await call("/_debug/put", { body: { collection: "v2-messages", key: tid + "/" + k, value } });
+    const feed = (await call("/_debug/dump"))["v2-feed"] || {};
+    for (const [fk, fv] of Object.entries(feed)) {
+      if (!fk.startsWith(tid + "/") || !fv || fv.k !== k) continue;
+      const copy = Object.assign({}, fv, value);
+      delete copy.cv;   // the feed holds what devices get, not the row's index fields
+      delete copy.o;
+      await call("/_debug/put", { body: { collection: "v2-feed", key: fk, value: copy } });
+    }
+  };
   const now = Date.now();
   await putMsg(kOwe, Object.assign({}, owe, { dir: "out", status: "sent", via: "rcs", sentAt: owe.ts }));
   const kReplay = "m:" + pad13(t0 + 3600000) + ":" + "aaaaaaaaaaaaaaaa";

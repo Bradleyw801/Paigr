@@ -209,14 +209,14 @@ public class StoreTest {
     @Test
     public void aTextMessagesFiledAsSpamGoesUpQuietAfterAWaitForItsNotification() throws Exception {
         long now = System.currentTimeMillis();
-        StoreSync.SETTLE_MS = 400;
+        StoreSync.SETTLE_MS = SETTLE_FOR_TESTS;   // generous, so a slow machine's scan still lands inside the window
         idleAtHome(now);
         int before = server.calls("/api/relay/ingest").size();
         // A text from a number Messages took for spam: it reached the store, and Messages posted nothing for it.
         phone.thread(21, "+18015550999");
         phone.sms(21, "+18015550999", now - 100, 1, false, "You have won a prize, claim it now");
         assertEquals("held while its notification may still come", 0, relay.storeSync.scanNow(0, false));
-        Thread.sleep(600);
+        Thread.sleep(SETTLE_FOR_TESTS + 100);
         assertEquals(1, relay.storeSync.scanNow(0, false));
         relay.drain();
         JSONObject spam = find(items("/api/relay/ingest"), "You have won a prize, claim it now");
@@ -242,10 +242,13 @@ public class StoreTest {
         assertFalse(second.has("quiet"));
     }
 
+    /** A settle window long enough that a slow machine's scan still comes inside it (the real one is two minutes). */
+    private static final long SETTLE_FOR_TESTS = 1500;
+
     /** A store text's first sight, the settle window, and the check after it: what the inbox then gets for it. */
     private JSONObject settled(String text) throws Exception {
         relay.storeSync.scanNow(0, false);
-        Thread.sleep(StoreSync.SETTLE_MS + 60);
+        Thread.sleep(StoreSync.SETTLE_MS + 100);
         relay.storeSync.scanNow(0, false);
         relay.drain();
         JSONObject it = find(items("/api/relay/ingest"), text);
@@ -256,7 +259,7 @@ public class StoreTest {
     @Test
     public void aTextIsNotTakenForQuietWhenThatMightNotBeMessagesDoing() throws Exception {
         long now = System.currentTimeMillis();
-        StoreSync.SETTLE_MS = 250;
+        StoreSync.SETTLE_MS = SETTLE_FOR_TESTS;
         // Not while the phone is in use: the conversation may be open on screen, which posts no notification either.
         idleAtHome(now);
         relay.storeSync.interactiveForTests = true;
@@ -307,7 +310,7 @@ public class StoreTest {
         assertFalse(find(items("/api/relay/ingest"), "Your code is 482913").has("quiet"));
 
         // And the same text, idle at home with nothing in the way, is quiet: the checks above are what stood in the way.
-        Thread.sleep(StoreSync.SETTLE_MS + 50);   // the hidden notification above is no longer "near"
+        Thread.sleep(StoreSync.SETTLE_MS + 100);   // the hidden notification above is no longer "near"
         phone.thread(38, "+18015550308");
         phone.sms(38, "+18015550308", System.currentTimeMillis() - 100, 1, false, "Claim your prize");
         assertEquals(v2(), settled("Claim your prize").optBoolean("quiet", false));
